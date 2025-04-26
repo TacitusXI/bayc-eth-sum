@@ -116,6 +116,16 @@
     }
   },
   "optimizedSolution": {
+    "1651363200": {
+      "blockNumber": 14688630,
+      "holderCount": 6346,
+      "totalWei": "170379574791625785326849",
+      "totalEth": "170379.574791625785326849",
+      "executionTime": 20557,
+      "method": "The Graph with optimized caching",
+      "implementation": "optimizedSolution",
+      "timestamp": "2025-04-26T10:00:23.049Z"
+    },
     "1745280000": {
       "blockNumber": 22320819,
       "holderCount": 5475,

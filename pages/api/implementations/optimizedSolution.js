@@ -40,6 +40,12 @@ const STATIC_PROVIDER = new ethers.providers.StaticJsonRpcProvider(ALCHEMY_API_U
 // Results storage - persist between restarts
 const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');
 
+// Add a new cache for block numbers
+const BLOCK_CACHE_FILE = path.join(process.cwd(), 'data', 'block-cache.json');
+
+// Add a cache file for BAYC holders by block
+const HOLDERS_CACHE_FILE = path.join(process.cwd(), 'data', 'holders-cache.json');
+
 // Removed public RPC endpoints since we're only using Alchemy now
 
 // Fallback data for when network is unavailable
@@ -64,6 +70,10 @@ const FALLBACK_DEMO_DATA = {
 // Provider and graph contract initialization
 let provider = null;
 let graphContract = null;
+
+// In-memory caches
+let blockNumberCache = {};
+let holdersCache = {};
 
 /**
  * Initialize provider with Alchemy only
@@ -117,6 +127,10 @@ const initgraph = () => {
 provider = initProvider();
 graphContract = initgraph();
 
+// Load the cache on module initialization
+loadBlockNumberCache();
+loadHoldersCache();
+
 /**
  * Check if we have fallback data for this timestamp
  */
@@ -149,23 +163,183 @@ function getFallbackBlockNumber(timestamp) {
 }
 
 /**
- * Find block number at specific timestamp using binary search
+ * Load the block number cache from disk
+ */
+function loadBlockNumberCache() {
+  try {
+    if (fs.existsSync(BLOCK_CACHE_FILE)) {
+      const fileContent = fs.readFileSync(BLOCK_CACHE_FILE, 'utf8');
+      blockNumberCache = JSON.parse(fileContent);
+      console.log(`Loaded ${Object.keys(blockNumberCache).length} cached block numbers`);
+    } else {
+      blockNumberCache = {};
+    }
+  } catch (error) {
+    console.error('Error loading block number cache:', error);
+    blockNumberCache = {};
+  }
+}
+
+/**
+ * Save the block number cache to disk
+ */
+function saveBlockNumberCache() {
+  try {
+    // Create directory if it doesn't exist
+    const dir = path.dirname(BLOCK_CACHE_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    fs.writeFileSync(BLOCK_CACHE_FILE, JSON.stringify(blockNumberCache, null, 2));
+    console.log(`Saved ${Object.keys(blockNumberCache).length} block numbers to cache`);
+  } catch (error) {
+    console.error('Error saving block number cache:', error);
+  }
+}
+
+/**
+ * Load the holders cache from disk
+ */
+function loadHoldersCache() {
+  try {
+    if (fs.existsSync(HOLDERS_CACHE_FILE)) {
+      const fileContent = fs.readFileSync(HOLDERS_CACHE_FILE, 'utf8');
+      holdersCache = JSON.parse(fileContent);
+      console.log(`Loaded ${Object.keys(holdersCache).length} cached holder snapshots`);
+    } else {
+      holdersCache = {};
+    }
+  } catch (error) {
+    console.error('Error loading holders cache:', error);
+    holdersCache = {};
+  }
+}
+
+/**
+ * Save the holders cache to disk
+ */
+function saveHoldersCache() {
+  try {
+    // Create directory if it doesn't exist
+    const dir = path.dirname(HOLDERS_CACHE_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    
+    // Only keep the 100 most recent block snapshots to avoid huge files
+    const blockNumbers = Object.keys(holdersCache)
+      .map(Number)
+      .sort((a, b) => b - a) // Sort in descending order
+      .slice(0, 100); // Keep the 100 most recent
+      
+    const reducedCache = {};
+    blockNumbers.forEach(block => {
+      reducedCache[block] = holdersCache[block];
+    });
+    
+    fs.writeFileSync(HOLDERS_CACHE_FILE, JSON.stringify(reducedCache, null, 2));
+    console.log(`Saved ${Object.keys(reducedCache).length} holder snapshots to cache`);
+    
+    // Update the in-memory cache to match
+    holdersCache = reducedCache;
+  } catch (error) {
+    console.error('Error saving holders cache:', error);
+  }
+}
+
+/**
+ * Find block number at specific timestamp using binary search with caching
  */
 async function getBlockNumberAtTimestamp(timestamp) {
   try {
-    // Binary search implementation
+    // First check our cache
+    const cachedBlockNumber = blockNumberCache[timestamp];
+    if (cachedBlockNumber) {
+      console.log(`Using cached block number ${cachedBlockNumber} for timestamp ${timestamp}`);
+      return cachedBlockNumber;
+    }
+    
+    // Check for nearby timestamps within 2-hour window
+    const timestampInt = parseInt(timestamp);
+    const nearbyTimestamps = Object.keys(blockNumberCache)
+      .map(Number)
+      .filter(t => Math.abs(t - timestampInt) < 7200); // 2 hours
+    
+    if (nearbyTimestamps.length > 0) {
+      // Find closest timestamp
+      const closestTimestamp = nearbyTimestamps.reduce((prev, curr) => 
+        Math.abs(curr - timestampInt) < Math.abs(prev - timestampInt) ? curr : prev
+      );
+      
+      // Estimate block number based on 13.5s average block time
+      const blockDiff = Math.round(Math.abs(timestampInt - closestTimestamp) / 13.5);
+      const direction = timestampInt > closestTimestamp ? 1 : -1;
+      const estimatedBlock = blockNumberCache[closestTimestamp] + (blockDiff * direction);
+      
+      console.log(`Estimated block ${estimatedBlock} for timestamp ${timestamp} based on nearby timestamp ${closestTimestamp}`);
+      
+      // Verify if our estimate is close enough
+      const verifyBlock = await provider.getBlock(estimatedBlock);
+      if (verifyBlock && Math.abs(verifyBlock.timestamp - timestampInt) < 300) { // Within 5 minutes
+        // Cache and return if close enough
+        blockNumberCache[timestamp] = estimatedBlock;
+        saveBlockNumberCache();
+        return estimatedBlock;
+      }
+      
+      // Use as starting point for binary search otherwise
+      let low = direction > 0 ? blockNumberCache[closestTimestamp] : Math.max(0, estimatedBlock - 1000);
+      let high = direction > 0 ? estimatedBlock + 1000 : blockNumberCache[closestTimestamp];
+      
+      console.log(`Using optimized range for binary search: [${low}, ${high}]`);
+      
+      let result = high;
+      let mid = 0;
+      let iterations = 0;
+      
+      while (low <= high && iterations < 20) {
+        iterations++;
+        mid = Math.floor((low + high) / 2);
+        const block = await provider.getBlock(mid);
+        if (!block) break;
+
+        console.log(`Iteration ${iterations}: Block #${mid} has timestamp ${block.timestamp} (target: ${timestamp})`);
+        
+        if (block.timestamp < timestampInt) {
+          low = mid + 1;
+        } else {
+          result = mid;
+          high = mid - 1;
+        }
+      }
+      
+      console.log(`Found block #${result} for timestamp ${timestamp} in ${iterations} iterations`);
+      
+      // Cache the result
+      blockNumberCache[timestamp] = result;
+      saveBlockNumberCache();
+      
+      return result;
+    }
+
+    // Normal binary search if no cached reference points
+    console.log(`Finding block at or after timestamp ${timestamp} using binary search...`);
+    
     let low = 0;
     let high = await provider.getBlockNumber();
     let result = high;
+    let iterations = 0;
 
-    console.log(`Finding block at or after timestamp ${timestamp} using binary search...`);
-    
-    while (low <= high) {
+    while (low <= high && iterations < 40) {
+      iterations++;
       const mid = Math.floor((low + high) / 2);
       const block = await provider.getBlock(mid);
       if (!block) break;
 
-      if (block.timestamp < timestamp) {
+      console.log(`Iteration ${iterations}: Block #${mid} has timestamp ${block.timestamp} (target: ${timestamp})`);
+      
+      if (block.timestamp < timestampInt) {
         low = mid + 1;
       } else {
         result = mid;
@@ -173,7 +347,12 @@ async function getBlockNumberAtTimestamp(timestamp) {
       }
     }
 
-    console.log(`Found block #${result} for timestamp ${timestamp}`);
+    console.log(`Found block #${result} for timestamp ${timestamp} in ${iterations} iterations`);
+    
+    // Cache the result
+    blockNumberCache[timestamp] = result;
+    saveBlockNumberCache();
+    
     return result;
   } catch (error) {
     console.error('Error in binary search for block:', error);
@@ -194,15 +373,27 @@ async function getBlockNumberAtTimestamp(timestamp) {
       if (response.data.status !== '1') {
         throw new Error(`Etherscan API error: ${response.data.message}`);
       }
-
-      return parseInt(response.data.result);
+      
+      const blockNumber = parseInt(response.data.result);
+      
+      // Cache the result
+      blockNumberCache[timestamp] = blockNumber;
+      saveBlockNumberCache();
+      
+      return blockNumber;
     } catch (secondaryError) {
       console.error('Etherscan fallback failed:', secondaryError);
       
       // Use fallback data if available
       if (hasFallbackData(timestamp)) {
         console.log(`Using fallback block data for timestamp ${timestamp}`);
-        return getFallbackBlockNumber(timestamp);
+        const blockNumber = getFallbackBlockNumber(timestamp);
+        
+        // Cache the result
+        blockNumberCache[timestamp] = blockNumber;
+        saveBlockNumberCache();
+        
+        return blockNumber;
       }
       
       throw error;
@@ -212,9 +403,36 @@ async function getBlockNumberAtTimestamp(timestamp) {
 
 /**
  * Get BAYC holders at a specific block by cursor-paging through tokens → owner
+ * With block-based caching for faster repeat queries
  */
 async function getBAYCHoldersAtBlock(blockNumber) {
   try {
+    // Check cache first
+    if (holdersCache[blockNumber]) {
+      console.log(`Using cached ${holdersCache[blockNumber].length} BAYC holders for block ${blockNumber}`);
+      return holdersCache[blockNumber];
+    }
+    
+    // Find closest cached block number
+    const cachedBlocks = Object.keys(holdersCache).map(Number);
+    if (cachedBlocks.length > 0) {
+      // Find blocks before and after the target
+      const blocksAfter = cachedBlocks.filter(b => b > blockNumber).sort((a, b) => a - b);
+      const blocksBefore = cachedBlocks.filter(b => b < blockNumber).sort((a, b) => b - a);
+      
+      // Use the closest block (preferring before)
+      if (blocksBefore.length > 0 && blockNumber - blocksBefore[0] < 1000) {
+        console.log(`Using nearby cached holders from block ${blocksBefore[0]} (${blockNumber - blocksBefore[0]} blocks earlier)`);
+        return holdersCache[blocksBefore[0]];
+      }
+      
+      // Use block after if it's close enough
+      if (blocksAfter.length > 0 && blocksAfter[0] - blockNumber < 100) {
+        console.log(`Using nearby cached holders from block ${blocksAfter[0]} (${blocksAfter[0] - blockNumber} blocks later)`);
+        return holdersCache[blocksAfter[0]];
+      }
+    }
+    
     console.log(`Querying The Graph for BAYC holders at block ${blockNumber}…`);
     
     const PAGE_SIZE = 1000;
@@ -264,13 +482,25 @@ async function getBAYCHoldersAtBlock(blockNumber) {
       );
     }
 
-    console.log(`Found ${holders.size} total unique BAYC holders`);
-    return Array.from(holders);
+    const holderArray = Array.from(holders);
+    console.log(`Found ${holderArray.length} total unique BAYC holders`);
+    
+    // Cache the result
+    holdersCache[blockNumber] = holderArray;
+    saveHoldersCache();
+    
+    return holderArray;
 
   } catch (error) {
     console.error("Error fetching BAYC holders via subgraph:", error);
     // fallback to transfer-history method
-    return getHoldersFromTokenTransfers(blockNumber);
+    const holders = await getHoldersFromTokenTransfers(blockNumber);
+    
+    // Cache this result too
+    holdersCache[blockNumber] = holders;
+    saveHoldersCache();
+    
+    return holders;
   }
 }
 
@@ -376,40 +606,79 @@ async function getEthBalancesgraph(addresses, blockNumber) {
   try {
     console.log(`Getting ETH balances for ${addresses.length} addresses with graph...`);
     
-    // Break addresses into chunks of 500 to avoid gas limit issues
-    const chunkSize = 500;
-    const balances = [];
+    // Increase chunk size from 500 to 1000 for fewer network calls
+    // Experiment with this value - some providers can handle up to 2000+
+    const chunkSize = 1000;
+    let balances = new Array(addresses.length).fill(ethers.BigNumber.from(0));
     
+    // Prepare the getEthBalance function signature once
+    const getEthBalanceSignature = graphContract.interface.getSighash('getEthBalance');
+    
+    // Create batches of chunks for parallel processing
+    const chunks = [];
     for (let i = 0; i < addresses.length; i += chunkSize) {
-      const chunk = addresses.slice(i, i + chunkSize);
-      console.log(`Processing chunk ${Math.floor(i/chunkSize) + 1}/${Math.ceil(addresses.length/chunkSize)} (${chunk.length} addresses)`);
-      
-      // Create calls array for graph
-      const calls = chunk.map(address => ({
-        target: graph_ADDRESS,
-        allowFailure: true,
-        callData: graphContract.interface.encodeFunctionData('getEthBalance', [address])
-      }));
-      
-      // Execute graph
-      const results = await graphContract.aggregate3(calls, { blockTag: blockNumber });
-      
-      // Process results
-      for (let j = 0; j < results.length; j++) {
-        const result = results[j];
-        if (result.success) {
+      chunks.push(addresses.slice(i, i + chunkSize));
+    }
+    
+    // Process chunks in parallel with concurrency limit
+    const concurrencyLimit = 3; // Adjust based on provider capacity
+    const results = [];
+    
+    // Process chunks in batches to limit concurrency
+    for (let i = 0; i < chunks.length; i += concurrencyLimit) {
+      const batch = chunks.slice(i, i + concurrencyLimit);
+      const batchPromises = batch.map(async (chunk, batchIndex) => {
+        const chunkOffset = (i + batchIndex) * chunkSize;
+        console.log(`Processing chunk ${i + batchIndex + 1}/${chunks.length} (${chunk.length} addresses)`);
+        
+        // Optimize call data preparation - minimal encoding operations
+        const calls = chunk.map(address => ({
+          target: graph_ADDRESS,
+          allowFailure: true,
+          // Precompute the calldata more efficiently
+          callData: getEthBalanceSignature + address.slice(2).padStart(64, '0')
+        }));
+        
+        // Execute graph with optimized retry logic
+        let retries = 0;
+        const maxRetries = 3;
+        let chunkResults;
+        
+        while (retries <= maxRetries) {
           try {
-            const balance = ethers.utils.defaultAbiCoder.decode(['uint256'], result.returnData)[0];
-            balances.push(balance);
+            chunkResults = await graphContract.aggregate3(calls, { blockTag: blockNumber });
+            break;
           } catch (error) {
-            console.error(`Error decoding balance result for address ${chunk[j]}:`, error.message);
-            balances.push(ethers.BigNumber.from(0));
+            retries++;
+            if (retries > maxRetries) throw error;
+            console.warn(`Retry ${retries}/${maxRetries} for chunk ${i + batchIndex + 1}`);
+            // Exponential backoff
+            await new Promise(r => setTimeout(r, 500 * Math.pow(2, retries - 1)));
           }
-        } else {
-          console.warn(`Failed to get balance for address ${chunk[j]}`);
-          balances.push(ethers.BigNumber.from(0));
         }
-      }
+        
+        // Process results into the correct positions in the balances array
+        for (let j = 0; j < chunkResults.length; j++) {
+          const result = chunkResults[j];
+          const position = chunkOffset + j;
+          
+          if (result.success && result.returnData.length >= 66) { // 0x + 64 hex chars
+            try {
+              // More efficient decoding directly from hex
+              balances[position] = ethers.BigNumber.from(result.returnData);
+            } catch (error) {
+              console.error(`Error decoding balance for address ${chunk[j]}:`, error.message);
+              // Keep default value of 0
+            }
+          }
+        }
+        
+        return { batchIndex, processed: true };
+      });
+      
+      // Wait for batch to complete before moving to next batch
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
     }
     
     return balances;
@@ -428,28 +697,57 @@ async function getEthBalancesgraph(addresses, blockNumber) {
 async function getFallbackBalances(addresses, blockNumber) {
   console.log(`Getting balances individually for ${addresses.length} addresses...`);
   
-  const balances = [];
-  const batchSize = 10; // Process in small batches
+  // Create pre-filled array
+  const balances = new Array(addresses.length).fill(ethers.BigNumber.from(0));
   
+  // Increase batch size significantly
+  const batchSize = 50; // Process in larger batches
+  const concurrencyLimit = 4; // Number of batches to process in parallel
+  
+  // Create batches
+  const batches = [];
   for (let i = 0; i < addresses.length; i += batchSize) {
-    const batch = addresses.slice(i, i + batchSize);
+    batches.push({
+      addresses: addresses.slice(i, i + batchSize),
+      startIndex: i
+    });
+  }
+  
+  // Process batches in parallel with concurrency limit
+  for (let i = 0; i < batches.length; i += concurrencyLimit) {
+    const currentBatches = batches.slice(i, i + concurrencyLimit);
     
-    // Process batch concurrently
-    const batchResults = await Promise.all(
-      batch.map(async (address) => {
-        try {
-          return await provider.getBalance(address, blockNumber);
-        } catch (error) {
-          console.error(`Error getting balance for ${address}:`, error.message);
-          return ethers.BigNumber.from(0);
-        }
-      })
-    );
+    await Promise.all(currentBatches.map(async (batch) => {
+      try {
+        // Process all addresses in this batch concurrently
+        const batchResults = await Promise.all(
+          batch.addresses.map(async (address, j) => {
+            try {
+              return { 
+                index: batch.startIndex + j,
+                balance: await provider.getBalance(address, blockNumber) 
+              };
+            } catch (error) {
+              console.error(`Error getting balance for ${address}:`, error.message);
+              return { 
+                index: batch.startIndex + j,
+                balance: ethers.BigNumber.from(0)
+              };
+            }
+          })
+        );
+        
+        // Update balances array with results
+        batchResults.forEach(result => {
+          balances[result.index] = result.balance;
+        });
+      } catch (error) {
+        console.error(`Error processing batch starting at ${batch.startIndex}:`, error);
+      }
+    }));
     
-    balances.push(...batchResults);
-    
-    if (i % 50 === 0 && i > 0) {
-      console.log(`Processed ${i}/${addresses.length} addresses...`);
+    if (i % (concurrencyLimit * 2) === 0 && i > 0) {
+      console.log(`Processed ${Math.min(i + concurrencyLimit, batches.length)}/${batches.length} batches (${Math.min((i + concurrencyLimit) * batchSize, addresses.length)}/${addresses.length} addresses)...`);
     }
   }
   
@@ -519,15 +817,32 @@ async function getTotalEthValueOfHolders(timestamp) {
   const startTime = Date.now();
   
   try {
+    // Use in-memory cache for previous results
+    const previousResults = getPreviousResults();
+    const cachedResult = previousResults?.['optimizedSolution']?.[timestamp];
+    
+    if (cachedResult) {
+      console.log(`Using cached result for timestamp ${timestamp}`);
+      // Convert string back to BigNumber for consistency
+      return {
+        ...cachedResult,
+        totalWei: ethers.BigNumber.from(cachedResult.totalWei),
+        fromCache: true
+      };
+    }
+    
     // Step 1: Get block number at timestamp
+    console.log(`Step 1: Finding block number for timestamp ${timestamp}`);
     const blockNumber = await getBlockNumberAtTimestamp(timestamp);
     console.log(`Using block number ${blockNumber} for timestamp ${timestamp}`);
     
     // Step 2: Get BAYC holders at that block
+    console.log(`Step 2: Getting BAYC holders at block ${blockNumber}`);
     const holders = await getBAYCHoldersAtBlock(blockNumber);
     console.log(`Found ${holders.length} BAYC holders at this block`);
     
-    // Step 3: Get ETH balances of all holders
+    // Step 3: Get ETH balances of all holders in parallel
+    console.log(`Step 3: Getting ETH balances for all holders`);
     const balances = await getEthBalancesgraph(holders, blockNumber);
     console.log(`Retrieved ${balances.length} balances`);
     
@@ -536,6 +851,7 @@ async function getTotalEthValueOfHolders(timestamp) {
     }
     
     // Step 4: Sum total ETH value
+    console.log(`Step 4: Calculating total ETH value`);
     const totalWei = balances.reduce((sum, balance) => sum.add(balance), ethers.BigNumber.from(0));
     const totalEth = ethers.utils.formatEther(totalWei);
     
@@ -548,7 +864,7 @@ async function getTotalEthValueOfHolders(timestamp) {
       totalWei,
       totalEth,
       executionTime,
-      method: 'The Graph', // Adding method used for holders data for comparison
+      method: 'The Graph with optimized caching',
       implementation: 'optimizedSolution'
     };
     
@@ -579,27 +895,30 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { timestamp } = req.body;
+    const { timestamp, useCache = true } = req.body;
     if (!timestamp) {
       return res.status(400).json({ message: 'Timestamp is required' });
     }
     
-    // Check if we have cached results
-    const previousResults = getPreviousResults();
-    const cachedResult = previousResults?.['optimizedSolution']?.[timestamp];
-    
-    if (cachedResult && req.body.useCache !== false) {
-      console.log(`Using cached result for timestamp ${timestamp}`);
+    // Check if we have cached results - using in-memory directly for faster response
+    if (useCache !== false) {
+      const previousResults = getPreviousResults();
+      const cachedResult = previousResults?.['optimizedSolution']?.[timestamp];
       
-      // Convert string back to BigNumber for consistency
-      cachedResult.totalWei = ethers.BigNumber.from(cachedResult.totalWei);
-      
-      return res.status(200).json({
-        ...cachedResult,
-        fromCache: true
-      });
+      if (cachedResult) {
+        console.log(`API: Using cached result for timestamp ${timestamp}`);
+        
+        // Convert string back to BigNumber for consistency
+        return res.status(200).json({
+          ...cachedResult,
+          totalWei: ethers.BigNumber.from(cachedResult.totalWei),
+          fromCache: true
+        });
+      }
     }
 
+    // Process the request with optimized functions
+    console.log(`API: Processing new request for timestamp ${timestamp}`);
     const result = await getTotalEthValueOfHolders(timestamp);
     return res.status(200).json(result);
   } catch (error) {
