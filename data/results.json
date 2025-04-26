@@ -15,10 +15,10 @@
       "holderCount": 5475,
       "totalWei": "102615108184572205391737",
       "totalEth": "102615.108184572205391737",
-      "executionTime": 27544,
+      "executionTime": 22503,
       "method": "The Graph",
       "implementation": "multicall",
-      "timestamp": "2025-04-26T07:02:14.587Z"
+      "timestamp": "2025-04-26T08:41:15.569Z"
     },
     "1745604837": {
       "blockNumber": 22347754,
