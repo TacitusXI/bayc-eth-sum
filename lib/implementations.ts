@@ -5,6 +5,7 @@ export interface Implementation {
   description: string;
   status: 'implemented' | 'planned';
   source: string;
+  codeUrl: string;
   estimate?: string;
 }
 
@@ -16,6 +17,7 @@ export const implementations: Implementation[] = [
     description: 'Makes individual RPC calls for each token and holder. Queries token ownership with direct contract calls and ETH balances one-by-one. Simplest but slowest method.',
     status: 'implemented',
     source: '/api/implementations/basic',
+    codeUrl: 'https://github.com/TacitusXI/bayc-eth-sum/blob/main/pages/api/implementations/basic.ts',
   },
   {
     id: 'graph',
@@ -23,6 +25,7 @@ export const implementations: Implementation[] = [
     description: 'Uses The Graph for token ownership data and Multicall contracts to batch ETH balance requests in a single call. Combines efficiency of both approaches.',
     status: 'implemented',
     source: '/api/implementations/graph',
+    codeUrl: 'https://github.com/TacitusXI/bayc-eth-sum/blob/main/pages/api/implementations/graph.ts',
   },
   {
     id: 'multicall',
@@ -30,6 +33,7 @@ export const implementations: Implementation[] = [
     description: 'Uses only Multicall contracts for both token ownership lookups and ETH balance fetching without any external services. Queries everything directly from the Ethereum network in efficient batches.',
     status: 'implemented',
     source: '/api/implementations/multicall',
+    codeUrl: 'https://github.com/TacitusXI/bayc-eth-sum/blob/main/pages/api/implementations/multicall.ts',
   },
   {
     id: 'optimizedSolution',
@@ -37,6 +41,7 @@ export const implementations: Implementation[] = [
     description: 'Enhanced implementation based on the Graph+Multicall approach with optimized batch processing and improved error handling. Designed for maximum performance and reliability.',
     status: 'implemented',
     source: '/api/implementations/optimizedSolution',
+    codeUrl: 'https://github.com/TacitusXI/bayc-eth-sum/blob/main/pages/api/implementations/optimizedSolution.ts',
   }
 ];
 

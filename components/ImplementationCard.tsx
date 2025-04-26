@@ -6,6 +6,7 @@ interface Implementation {
   description: string;
   status: 'implemented' | 'planned';
   estimate?: string;
+  codeUrl?: string;
 }
 
 interface Result {
@@ -72,6 +73,19 @@ const ImplementationCard: React.FC<ImplementationCardProps> = ({
             'Run'
           )}
         </button>
+        {isImplemented && (
+          <a
+            href={implementation.codeUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn-code"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="code-icon">
+              <path fillRule="evenodd" d="M6.28 5.22a.75.75 0 010 1.06L2.56 10l3.72 3.72a.75.75 0 01-1.06 1.06L.97 10.53a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 0zm7.44 0a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L17.44 10l-3.72-3.72a.75.75 0 010-1.06zM11.377 2.011a.75.75 0 01.612.867l-2.5 14.5a.75.75 0 01-1.478-.255l2.5-14.5a.75.75 0 01.866-.612z" clipRule="evenodd" />
+            </svg>
+            View Code
+          </a>
+        )}
       </div>
       
       {error && (
@@ -197,6 +211,7 @@ const ImplementationCard: React.FC<ImplementationCardProps> = ({
           padding: 1rem 1.5rem;
           display: flex;
           justify-content: flex-start;
+          gap: 0.5rem;
         }
         
         .btn-primary {
@@ -351,6 +366,33 @@ const ImplementationCard: React.FC<ImplementationCardProps> = ({
           background-color: var(--gray-50);
           border-radius: var(--border-radius);
           color: var(--gray-700);
+        }
+        
+        .code-icon {
+          width: 1rem;
+          height: 1rem;
+          margin-right: 0.5rem;
+        }
+        
+        .btn-code {
+          background-color: var(--gray-100);
+          color: var(--gray-800);
+          border: 1px solid var(--gray-300);
+          border-radius: var(--border-radius);
+          padding: 0.5rem 1.25rem;
+          font-size: 0.875rem;
+          font-weight: 500;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 0.5rem;
+          text-decoration: none;
+          transition: all 0.2s ease;
+        }
+        
+        .btn-code:hover {
+          background-color: var(--gray-200);
+          border-color: var(--gray-400);
         }
       `}</style>
     </div>

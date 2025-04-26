@@ -302,20 +302,20 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
     <div className="performance-chart">
       <div className="chart-controls">
         <h3>Performance Comparison</h3>
-        <div className="view-toggle">
-          <button 
-            className={`toggle-button ${viewMode === 'executionTime' ? 'active' : ''}`}
-            onClick={() => setViewMode('executionTime')}
-          >
-            Execution Time
-          </button>
-          <button 
-            className={`toggle-button ${viewMode === 'relativeSpeed' ? 'active' : ''}`}
-            onClick={() => setViewMode('relativeSpeed')}
-          >
-            Relative Speed
-          </button>
-        </div>
+      </div>
+      <div className="view-toggle">
+        <button 
+          className={`toggle-button ${viewMode === 'executionTime' ? 'active' : ''}`}
+          onClick={() => setViewMode('executionTime')}
+        >
+          Execution Time
+        </button>
+        <button 
+          className={`toggle-button ${viewMode === 'relativeSpeed' ? 'active' : ''}`}
+          onClick={() => setViewMode('relativeSpeed')}
+        >
+          Relative Speed
+        </button>
       </div>
 
       <div className="chart-container">
@@ -325,27 +325,6 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
           <div className="no-data">Run implementations to see performance comparison</div>
         )}
       </div>
-
-      {comparisonData && (
-        <div className="comparison">
-          <h4>Implementation Comparison</h4>
-          <p>
-            <span className="highlight">{comparisonData.fasterImplementation === 'pure-multicall' ? 'Full Multicall' : 'Hybrid Graph+Multicall'}</span> 
-            is <span className="highlight">{comparisonData.speedupFactor}x faster</span> 
-            ({(comparisonData.executionDiff/1000).toFixed(2)}s difference)
-          </p>
-          {comparisonData.holderCountDiff > 0 && (
-            <p>
-              Holder difference: <span className="highlight">{comparisonData.holderCountDiff}</span> accounts
-              <br />
-              ETH total difference: <span className="highlight">{comparisonData.totalEthDiff}</span> ETH
-            </p>
-          )}
-          <p className="note">
-            <strong>Note:</strong> Differences in holder count can affect accuracy. The hybrid implementation may be more accurate due to The Graph's comprehensive data indexing.
-          </p>
-        </div>
-      )}
 
       <style jsx>{`
         .performance-chart {
@@ -357,10 +336,7 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
         }
         
         .chart-controls {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1.5rem;
+          margin-bottom: 1rem;
         }
         
         .chart-controls h3 {
@@ -371,33 +347,44 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
         
         .view-toggle {
           display: flex;
-          border-radius: var(--border-radius);
+          border-radius: 8px;
           overflow: hidden;
-          border: 1px solid var(--border-color);
+          background: var(--card-bg-hover);
+          padding: 4px;
+          gap: 4px;
+          margin-bottom: 1.5rem;
+          width: fit-content;
         }
         
         .toggle-button {
-          padding: 0.5rem 1rem;
+          padding: 8px 16px;
           background: none;
           border: none;
           font-size: 0.875rem;
           cursor: pointer;
-          color: var(--foreground);
+          color: var(--gray-600);
+          transition: all 0.2s ease;
+          border-radius: 6px;
+          font-weight: 500;
         }
         
         .toggle-button.active {
           background-color: var(--primary);
           color: white;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .toggle-button:hover:not(.active) {
           background-color: var(--gray-100);
+          color: var(--gray-800);
         }
         
         .chart-container {
-          height: 400px;
-          margin-bottom: 1.5rem;
+          height: 600px;
           position: relative;
+          width: 100%;
+          min-height: 500px;
+          max-height: 800px;
         }
         
         .no-data {
@@ -409,39 +396,6 @@ const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
           font-style: italic;
           text-align: center;
           padding: 2rem;
-        }
-        
-        .comparison {
-          background-color: var(--card-bg-hover);
-          padding: 1.25rem;
-          border-radius: var(--border-radius);
-          margin-top: 1.5rem;
-        }
-        
-        .comparison h4 {
-          margin-top: 0;
-          margin-bottom: 0.75rem;
-          font-size: 1.125rem;
-          color: var(--foreground);
-        }
-        
-        .comparison p {
-          margin: 0.5rem 0;
-          font-size: 0.875rem;
-          color: var(--gray-700);
-        }
-        
-        .highlight {
-          color: var(--primary);
-          font-weight: 600;
-        }
-        
-        .note {
-          margin-top: 1rem;
-          font-size: 0.8125rem;
-          color: var(--gray-600);
-          padding-top: 0.75rem;
-          border-top: 1px solid var(--border-color);
         }
       `}</style>
     </div>

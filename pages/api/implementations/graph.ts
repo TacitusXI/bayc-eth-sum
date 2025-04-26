@@ -1,3 +1,4 @@
+// graph implementation - uses TheGraph for token ownership and multicall for balance queries
 import { ethers } from 'ethers';
 import axios from 'axios';
 import fs from 'fs';
@@ -91,7 +92,6 @@ const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');
 const FALLBACK_DEMO_DATA: FallbackData = {
   // Example timestamp -> block mapping
   blocks: {
-    '1651363200': 14723000, // May 1, 2022
     '1609459200': 11565019, // Jan 1, 2021
     '1577836800': 9193266,  // Jan 1, 2020
     '1546300800': 6988614   // Jan 1, 2019
@@ -563,6 +563,11 @@ async function getTotalEthValueOfHolders(timestamp: number): Promise<{
     throw error;
   }
 }
+
+const BLOCK_NUMBERS: { [timestamp: string]: number } = {
+  '1704067200': 18900000, // Jan 1, 2024
+  '1735689600': 20000000, // Jan 1, 2025
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
   if (req.method !== 'POST') {

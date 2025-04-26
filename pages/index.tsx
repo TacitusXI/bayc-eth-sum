@@ -44,15 +44,25 @@ const formatDate = (timestamp: number): string => {
 
 // Preset timestamps
 const presets: Preset[] = [
-  { label: 'May 1, 2022', value: 1651363200 },
-  { label: 'Jan 1, 2023', value: 1672531200 },
-  { label: 'May 4, 2023', value: 1683158400 },
+  { label: 'Jan 1, 2022', value: 1640995200 },
+  { label: 'Jul 1, 2022', value: 1656633600 },
+  { label: 'Jul 1, 2023', value: 1688169600 },
   { label: 'Apr 25, 2025', value: 1745280000 },
   { label: 'Now', value: Math.floor(Date.now() / 1000) },
 ];
 
+const dateOptions = [
+  { label: 'Current', value: Math.floor(Date.now() / 1000) },
+  { label: 'Jan 1, 2022', value: 1640995200 },
+  { label: 'Jul 1, 2022', value: 1656633600 },
+  { label: 'Jul 1, 2023', value: 1688169600 },
+  { label: 'Jan 1, 2024', value: 1704067200 },
+  { label: 'Jan 1, 2025', value: 1735689600 },
+  { label: 'Apr 25, 2025', value: 1745280000 },
+];
+
 export default function Home() {
-  const [timestamp, setTimestamp] = useState<number>(1651363200); // Default to May 1, 2022
+  const [timestamp, setTimestamp] = useState<number>(1745280000); // Default to Apr 25, 2025
   const [results, setResults] = useState<Results>({});
   const [loading, setLoading] = useState<LoadingState>({});
   const [error, setError] = useState<ErrorState>({});

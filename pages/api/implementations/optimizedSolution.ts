@@ -1,4 +1,4 @@
-//optimizedSolution.ts
+// optimized implementation - enhanced version of graph+multicall with Etherscan API instead binary search and improved batching and error handling
 import { ethers } from 'ethers';
 import axios from 'axios';
 import fs from 'fs';
