@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
 // Use the same path as in implementation files
 const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');
