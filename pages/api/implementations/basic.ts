@@ -6,6 +6,9 @@ import fs from 'fs'
 import path from 'path'
 import { NextApiRequest, NextApiResponse } from 'next'
 
+// Configure Edge Runtime (required by Fleek)
+export const runtime = 'edge';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
