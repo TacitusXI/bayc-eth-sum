@@ -52,8 +52,8 @@ const PerformanceChart = ({ results }) => {
     const labels = validResults.map(([id, _]) => {
       // Format implementation names based on new implementation names
       if (id === 'basic') return 'Individual RPC Calls';
-      if (id === 'multicall') return 'Hybrid Graph+Multicall';
-      if (id === 'pure-multicall') return 'Full Multicall';
+      if (id === 'graph') return 'Hybrid Graph+Multicall';
+      if (id === 'multicall') return 'Full Multicall';
       return id.charAt(0).toUpperCase() + id.slice(1);
     });
     
@@ -78,7 +78,7 @@ const PerformanceChart = ({ results }) => {
     });
 
     // Prepare comparison data for multicall implementations
-    const pureMulticallResult = results['pure-multicall'];
+    const pureMulticallResult = results['multicall'];
     const multicallResult = results['multicall'];
     
     if (pureMulticallResult && multicallResult) {

@@ -1,3 +1,4 @@
+// multicall implementation - uses multicall for ALL RPC queries
 import { ethers } from 'ethers';
 import axios from 'axios';
 import fs from 'fs';
@@ -16,57 +17,25 @@ const MULTICALL_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11'; // Multi
 // ABI for Multicall3
 const MULTICALL_ABI = [
   'function aggregate(tuple(address target, bytes callData)[] calls) view returns (uint256 blockNumber, bytes[] returnData)',
-  'function blockAndAggregate(tuple(address target, bytes callData)[] calls) view returns (uint256 blockNumber, bytes32 blockHash, tuple(bool success, bytes returnData)[] returnData)',
-  'function getBlockHash(uint256 blockNumber) view returns (bytes32 blockHash)',
-  'function getBlockNumber() view returns (uint256 blockNumber)',
-  'function getCurrentBlockCoinbase() view returns (address coinbase)',
-  'function getCurrentBlockDifficulty() view returns (uint256 difficulty)',
-  'function getCurrentBlockGasLimit() view returns (uint256 gaslimit)',
-  'function getCurrentBlockTimestamp() view returns (uint256 timestamp)',
-  'function getEthBalance(address addr) view returns (uint256 balance)',
-  'function getLastBlockHash() view returns (bytes32 blockHash)',
   'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)',
-  'function aggregate3Value(tuple(address target, bool allowFailure, bytes callData, uint256 value)[] calls) payable returns (tuple(bool success, bytes returnData)[] returnData)',
-  'function tryAggregate(bool requireSuccess, tuple(address target, bytes callData)[] calls) view returns (tuple(bool success, bytes returnData)[] returnData)',
-  'function tryBlockAndAggregate(bool requireSuccess, tuple(address target, bytes callData)[] calls) view returns (uint256 blockNumber, bytes32 blockHash, tuple(bool success, bytes returnData)[] returnData)'
+  'function getEthBalance(address addr) view returns (uint256 balance)'
 ];
 
-// Graph API endpoint for BAYC data
-const GRAPH_URL = process.env.BAYC_SUBGRAPH_URL;
+// ABI for ERC721 (BAYC)
+const BAYC_ABI = [
+  'function totalSupply() view returns (uint256)',
+  'function ownerOf(uint256 tokenId) view returns (address)'
+];
 
-// Static provider as reliable fallback
-const STATIC_PROVIDER = new ethers.providers.StaticJsonRpcProvider(ALCHEMY_API_URL);
-
-// Results storage - persist between restarts
+// Results file path
 const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');
 
-// Removed public RPC endpoints since we're only using Alchemy now
-
-// Fallback data for when network is unavailable
-const FALLBACK_DEMO_DATA = {
-  // Example timestamp -> block mapping
-  blocks: {
-    '1651363200': 14723000, // May 1, 2022
-    '1609459200': 11565019, // Jan 1, 2021
-    '1577836800': 9193266,  // Jan 1, 2020
-    '1546300800': 6988614   // Jan 1, 2019
-  },
-  // Sample addresses for demo
-  sampleHolders: [
-    '0x7Be8076f4EA4A4AD08075C2508e481d6C946D12b', // OpenSea
-    '0xb88F61E6FbdA83fbfffAbE364112137480398018',
-    '0x0315FA3813Ff4999C264641B202d0D2B21df139C',
-    '0xA858DDc0445d8131daC4d1DE01f834ffcbA52Ef1',
-    '0x1b523DC1cB8B17B0170aa9234cA1CFF3E1Ea36bF'
-  ]
-};
-
-// Provider and multicall contract initialization
+// Provider and contract initialization
 let provider = null;
 let multicallContract = null;
 
 /**
- * Initialize provider with Alchemy only
+ * Initialize provider
  */
 const initProvider = () => {
   if (provider) return provider;
@@ -76,19 +45,17 @@ const initProvider = () => {
   if (ALCHEMY_API_KEY) {
     try {
       console.log("Using Alchemy provider");
-      provider = new ethers.providers.StaticJsonRpcProvider(ALCHEMY_API_URL);
+      provider = new ethers.providers.JsonRpcProvider(ALCHEMY_API_URL);
       return provider;
     } catch (error) {
-      console.error('Failed to create Alchemy provider:', error.message);
+      console.error('Failed to create provider:', error.message);
       provider = null;
     }
   } else {
     console.error("No Alchemy API key provided!");
   }
   
-  console.log("Using static provider as last resort");
-  provider = STATIC_PROVIDER;
-  return provider;
+  throw new Error("Failed to initialize provider");
 };
 
 /**
@@ -98,10 +65,6 @@ const initMulticall = () => {
   if (multicallContract) return multicallContract;
   
   const p = provider || initProvider();
-  if (!p) {
-    console.error("Failed to initialize provider for multicall contract");
-    return null;
-  }
   
   try {
     multicallContract = new ethers.Contract(MULTICALL_ADDRESS, MULTICALL_ABI, p);
@@ -112,349 +75,6 @@ const initMulticall = () => {
     return null;
   }
 };
-
-// Initialize provider and multicall contract
-provider = initProvider();
-multicallContract = initMulticall();
-
-/**
- * Check if we have fallback data for this timestamp
- */
-function hasFallbackData(timestamp) {
-  return timestamp in FALLBACK_DEMO_DATA.blocks || 
-        Object.keys(FALLBACK_DEMO_DATA.blocks).some(t => Math.abs(parseInt(t) - timestamp) < 86400);
-}
-
-/**
- * Get closest fallback block number
- */
-function getFallbackBlockNumber(timestamp) {
-  if (timestamp in FALLBACK_DEMO_DATA.blocks) {
-    return FALLBACK_DEMO_DATA.blocks[timestamp];
-  }
-  
-  const timestamps = Object.keys(FALLBACK_DEMO_DATA.blocks).map(Number);
-  let closest = timestamps[0];
-  let minDiff = Math.abs(closest - timestamp);
-  
-  for (let i = 1; i < timestamps.length; i++) {
-    const diff = Math.abs(timestamps[i] - timestamp);
-    if (diff < minDiff) {
-      minDiff = diff;
-      closest = timestamps[i];
-    }
-  }
-  
-  return FALLBACK_DEMO_DATA.blocks[closest];
-}
-
-/**
- * Find block number at specific timestamp using binary search
- */
-async function getBlockNumberAtTimestamp(timestamp) {
-  try {
-    // Binary search implementation
-    let low = 0;
-    let high = await provider.getBlockNumber();
-    let result = high;
-
-    console.log(`Finding block at or after timestamp ${timestamp} using binary search...`);
-    
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const block = await provider.getBlock(mid);
-      if (!block) break;
-
-      if (block.timestamp < timestamp) {
-        low = mid + 1;
-      } else {
-        result = mid;
-        high = mid - 1;
-      }
-    }
-
-    console.log(`Found block #${result} for timestamp ${timestamp}`);
-    return result;
-  } catch (error) {
-    console.error('Error in binary search for block:', error);
-    
-    // Fallback to Etherscan API
-    try {
-      console.log('Falling back to Etherscan API for block number...');
-      const response = await axios.get(ETHERSCAN_API_URL, {
-        params: {
-          module: 'block',
-          action: 'getblocknobytime',
-          timestamp,
-          closest: 'before',
-          apikey: ETHERSCAN_API_KEY
-        }
-      });
-
-      if (response.data.status !== '1') {
-        throw new Error(`Etherscan API error: ${response.data.message}`);
-      }
-
-      return parseInt(response.data.result);
-    } catch (secondaryError) {
-      console.error('Etherscan fallback failed:', secondaryError);
-      
-      // Use fallback data if available
-      if (hasFallbackData(timestamp)) {
-        console.log(`Using fallback block data for timestamp ${timestamp}`);
-        return getFallbackBlockNumber(timestamp);
-      }
-      
-      throw error;
-    }
-  }
-}
-
-/**
- * Get BAYC holders at a specific block by cursor-paging through tokens → owner
- */
-async function getBAYCHoldersAtBlock(blockNumber) {
-  try {
-    console.log(`Querying The Graph for BAYC holders at block ${blockNumber}…`);
-    
-    const PAGE_SIZE = 1000;
-    let lastId = "";            // cursor: start before the first token
-    const holders = new Set();
-
-    const QUERY = `
-      query holders($block: Int!, $lastId: String!) {
-        tokens(
-          first: ${PAGE_SIZE},
-          where: { id_gt: $lastId },
-          block: { number: $block },
-          orderBy: id,
-          orderDirection: asc
-        ) {
-          id
-          owner { id }
-        }
-      }
-    `;
-
-    while (true) {
-      console.log(`Fetching tokens after id='${lastId}'…`);
-      const response = await axios.post(GRAPH_URL, {
-        query: QUERY,
-        variables: { block: blockNumber, lastId }
-      });
-
-      if (response.data.errors) {
-        console.error("GraphQL errors:", response.data.errors);
-        throw new Error("GraphQL query failed");
-      }
-
-      const tokens = response.data.data.tokens;
-      if (!tokens.length) {
-        console.log("No more tokens to fetch");
-        break;
-      }
-
-      // Add each owner to our Set
-      tokens.forEach(t => holders.add(t.owner.id.toLowerCase()));
-
-      // Advance cursor to the last token ID of this page
-      lastId = tokens[tokens.length - 1].id;
-      console.log(
-        `  → Fetched ${tokens.length} tokens; unique owners so far: ${holders.size}`
-      );
-    }
-
-    console.log(`Found ${holders.size} total unique BAYC holders`);
-    return Array.from(holders);
-
-  } catch (error) {
-    console.error("Error fetching BAYC holders via subgraph:", error);
-    // fallback to transfer-history method
-    return getHoldersFromTokenTransfers(blockNumber);
-  }
-}
-
-/**
- * Fallback method to get holders from token transfers
- */
-async function getHoldersFromTokenTransfers(blockNumber) {
-  try {
-    console.log('Falling back to token transfers method');
-    
-    // Track ownership using transfer history
-    const ownershipMap = new Map();
-    let page = 1;
-    let hasMoreData = true;
-    
-    while (hasMoreData && page <= 5) { // Limit to 5 pages for performance
-      // Fetch token transfers from Etherscan
-      const response = await axios.get(ETHERSCAN_API_URL, {
-        params: {
-          module: 'account',
-          action: 'tokennfttx',
-          contractaddress: BAYC_CONTRACT_ADDRESS,
-          page,
-          offset: 100, // 100 transfers per page
-          sort: 'asc',
-          apikey: ETHERSCAN_API_KEY
-        }
-      });
-      
-      if (response.data.status !== '1') {
-        console.error(`Etherscan API error: ${response.data.message}`);
-        break;
-      }
-      
-      const transfers = response.data.result;
-      console.log(`Retrieved ${transfers.length} transfers (page ${page})`);
-      
-      if (transfers.length === 0) {
-        hasMoreData = false;
-        break;
-      }
-      
-      // Process transfers
-      for (const transfer of transfers) {
-        // Skip transfers after our target block
-        if (parseInt(transfer.blockNumber) > blockNumber) {
-          hasMoreData = false;
-          break;
-        }
-        
-        const tokenId = transfer.tokenID;
-        const from = transfer.from.toLowerCase();
-        const to = transfer.to.toLowerCase();
-        
-        // Skip token minting (from zero address)
-        if (from !== '0x0000000000000000000000000000000000000000') {
-          // Remove token from previous owner
-          if (ownershipMap.has(from)) {
-            ownershipMap.get(from).delete(tokenId);
-            
-            // If the owner has no more tokens, remove them from the map
-            if (ownershipMap.get(from).size === 0) {
-              ownershipMap.delete(from);
-            }
-          }
-        }
-        
-        // Add token to new owner
-        if (!ownershipMap.has(to)) {
-          ownershipMap.set(to, new Set());
-        }
-        ownershipMap.get(to).add(tokenId);
-      }
-      
-      page++;
-    }
-    
-    // Extract holders at this block
-    const holders = Array.from(ownershipMap.keys()).filter(
-      address => address !== '0x0000000000000000000000000000000000000000'
-    );
-    
-    console.log(`Found ${holders.length} BAYC holders from historical transfers`);
-    return holders;
-  } catch (error) {
-    console.error('Error with token transfers method:', error);
-    return FALLBACK_DEMO_DATA.sampleHolders;
-  }
-}
-
-/**
- * Get ETH balances for multiple addresses in a single multicall
- * This is the key optimization of this implementation
- */
-async function getEthBalancesMulticall(addresses, blockNumber) {
-  if (!multicallContract) {
-    multicallContract = initMulticall();
-    if (!multicallContract) {
-      throw new Error('Failed to initialize multicall contract');
-    }
-  }
-  
-  try {
-    console.log(`Getting ETH balances for ${addresses.length} addresses with Multicall...`);
-    
-    // Break addresses into chunks of 500 to avoid gas limit issues
-    const chunkSize = 500;
-    const balances = [];
-    
-    for (let i = 0; i < addresses.length; i += chunkSize) {
-      const chunk = addresses.slice(i, i + chunkSize);
-      console.log(`Processing chunk ${Math.floor(i/chunkSize) + 1}/${Math.ceil(addresses.length/chunkSize)} (${chunk.length} addresses)`);
-      
-      // Create calls array for multicall
-      const calls = chunk.map(address => ({
-        target: MULTICALL_ADDRESS,
-        allowFailure: true,
-        callData: multicallContract.interface.encodeFunctionData('getEthBalance', [address])
-      }));
-      
-      // Execute multicall
-      const results = await multicallContract.aggregate3(calls, { blockTag: blockNumber });
-      
-      // Process results
-      for (let j = 0; j < results.length; j++) {
-        const result = results[j];
-        if (result.success) {
-          try {
-            const balance = ethers.utils.defaultAbiCoder.decode(['uint256'], result.returnData)[0];
-            balances.push(balance);
-          } catch (error) {
-            console.error(`Error decoding balance result for address ${chunk[j]}:`, error.message);
-            balances.push(ethers.BigNumber.from(0));
-          }
-        } else {
-          console.warn(`Failed to get balance for address ${chunk[j]}`);
-          balances.push(ethers.BigNumber.from(0));
-        }
-      }
-    }
-    
-    return balances;
-  } catch (error) {
-    console.error('Error in multicall getEthBalances:', error);
-    
-    // Fallback to regular balance fetching if multicall fails
-    console.log('Multicall failed, falling back to individual balance queries...');
-    return getFallbackBalances(addresses, blockNumber);
-  }
-}
-
-/**
- * Fallback method to get balances individually if multicall fails
- */
-async function getFallbackBalances(addresses, blockNumber) {
-  console.log(`Getting balances individually for ${addresses.length} addresses...`);
-  
-  const balances = [];
-  const batchSize = 10; // Process in small batches
-  
-  for (let i = 0; i < addresses.length; i += batchSize) {
-    const batch = addresses.slice(i, i + batchSize);
-    
-    // Process batch concurrently
-    const batchResults = await Promise.all(
-      batch.map(async (address) => {
-        try {
-          return await provider.getBalance(address, blockNumber);
-        } catch (error) {
-          console.error(`Error getting balance for ${address}:`, error.message);
-          return ethers.BigNumber.from(0);
-        }
-      })
-    );
-    
-    balances.push(...batchResults);
-    
-    if (i % 50 === 0 && i > 0) {
-      console.log(`Processed ${i}/${addresses.length} addresses...`);
-    }
-  }
-  
-  return balances;
-}
 
 /**
  * Save results to file for persistence
@@ -482,7 +102,7 @@ async function saveResultsToFile(implementationId, timestamp, result) {
     // Convert BigNumber to string for JSON storage
     const resultToSave = {
       ...result,
-      totalWei: result.totalWei.toString(),
+      totalWei: result.totalWei?.toString(),
       executionTime: result.executionTime,
       timestamp: new Date().toISOString()
     };
@@ -513,42 +133,188 @@ function getPreviousResults() {
 }
 
 /**
- * Get total ETH value of all BAYC holders
+ * Find block number at specific timestamp using Etherscan API
+ */
+async function getBlockNumberAtTimestamp(timestamp) {
+  try {
+    console.log(`Looking up block number for timestamp ${timestamp} using Etherscan API...`);
+    const response = await axios.get(ETHERSCAN_API_URL, {
+      params: {
+        module: 'block',
+        action: 'getblocknobytime',
+        timestamp,
+        closest: 'before',
+        apikey: ETHERSCAN_API_KEY
+      }
+    });
+
+    if (response.data.status !== '1') {
+      throw new Error(`Etherscan API error: ${response.data.message}`);
+    }
+
+    const blockNumber = parseInt(response.data.result);
+    console.log(`Found block #${blockNumber} for timestamp ${timestamp}`);
+    return blockNumber;
+  } catch (error) {
+    console.error('Error getting block number:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get BAYC total supply using multicall
+ */
+async function getTotalSupply(blockNumber) {
+  if (!multicallContract) {
+    multicallContract = initMulticall();
+  }
+  
+  console.log(`Getting BAYC totalSupply at block ${blockNumber} using multicall...`);
+  
+  const baycInterface = new ethers.utils.Interface(BAYC_ABI);
+  const callData = baycInterface.encodeFunctionData('totalSupply', []);
+  
+  const calls = [{
+    target: BAYC_CONTRACT_ADDRESS,
+    callData
+  }];
+  
+  const [, returnData] = await multicallContract.aggregate(calls, { blockTag: blockNumber });
+  const totalSupply = ethers.BigNumber.from(returnData[0]).toNumber();
+  
+  console.log(`BAYC totalSupply: ${totalSupply}`);
+  return totalSupply;
+}
+
+/**
+ * Get BAYC token owners using multicall in batches
+ */
+async function getTokenOwners(totalSupply, blockNumber) {
+  if (!multicallContract) {
+    multicallContract = initMulticall();
+  }
+  
+  console.log(`Getting owners for all ${totalSupply} tokens using multicall in batches...`);
+  
+  const baycInterface = new ethers.utils.Interface(BAYC_ABI);
+  const owners = new Set();
+  const batchSize = 50; // Process in batches of 50 tokens
+  
+  for (let i = 1; i <= totalSupply; i += batchSize) {
+    const end = Math.min(i + batchSize - 1, totalSupply);
+    console.log(`Processing tokens ${i} to ${end}...`);
+    
+    // Create calls for this batch
+    const calls = [];
+    for (let tokenId = i; tokenId <= end; tokenId++) {
+      calls.push({
+        target: BAYC_CONTRACT_ADDRESS,
+        allowFailure: true,
+        callData: baycInterface.encodeFunctionData('ownerOf', [tokenId])
+      });
+    }
+    
+    // Execute multicall
+    const results = await multicallContract.aggregate3(calls, { blockTag: blockNumber });
+    
+    // Process results
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      if (result.success) {
+        try {
+          const owner = baycInterface.decodeFunctionResult('ownerOf', result.returnData)[0].toLowerCase();
+          if (owner !== '0x0000000000000000000000000000000000000000') {
+            owners.add(owner);
+          }
+        } catch (error) {
+          console.warn(`Failed to decode owner for token ${i + j}:`, error.message);
+        }
+      } else {
+        console.warn(`Token ${i + j} ownership check failed`);
+      }
+    }
+  }
+  
+  const holderArray = Array.from(owners);
+  console.log(`Found ${holderArray.length} unique holders`);
+  return holderArray;
+}
+
+/**
+ * Get ETH balances using multicall
+ */
+async function getEthBalancesMulticall(addresses, blockNumber) {
+  if (!multicallContract) {
+    multicallContract = initMulticall();
+  }
+  
+  console.log(`Getting ETH balances for ${addresses.length} addresses with Multicall...`);
+  
+  // Break addresses into chunks of 100 to avoid gas limit issues
+  const chunkSize = 100;
+  let totalBalance = ethers.BigNumber.from(0);
+  
+  for (let i = 0; i < addresses.length; i += chunkSize) {
+    const chunk = addresses.slice(i, i + chunkSize);
+    console.log(`Processing chunk ${Math.floor(i/chunkSize) + 1}/${Math.ceil(addresses.length/chunkSize)} (${chunk.length} addresses)`);
+    
+    // Create calls array for multicall
+    const calls = chunk.map(address => ({
+      target: MULTICALL_ADDRESS,
+      callData: multicallContract.interface.encodeFunctionData('getEthBalance', [address])
+    }));
+    
+    // Execute multicall
+    const [, returnData] = await multicallContract.aggregate(calls, { blockTag: blockNumber });
+    
+    // Process results
+    for (let j = 0; j < returnData.length; j++) {
+      try {
+        const balance = ethers.utils.defaultAbiCoder.decode(['uint256'], returnData[j])[0];
+        totalBalance = totalBalance.add(balance);
+      } catch (error) {
+        console.error(`Error decoding balance for address ${j + i}:`, error.message);
+      }
+    }
+  }
+  
+  return totalBalance;
+}
+
+/**
+ * Main function to get total ETH value of all BAYC holders
  */
 async function getTotalEthValueOfHolders(timestamp) {
   const startTime = Date.now();
   
   try {
+    // Initialize provider and multicall contract
+    provider = initProvider();
+    multicallContract = initMulticall();
+    
     // Step 1: Get block number at timestamp
     const blockNumber = await getBlockNumberAtTimestamp(timestamp);
-    console.log(`Using block number ${blockNumber} for timestamp ${timestamp}`);
     
-    // Step 2: Get BAYC holders at that block
-    const holders = await getBAYCHoldersAtBlock(blockNumber);
-    console.log(`Found ${holders.length} BAYC holders at this block`);
+    // Step 2: Get total supply using multicall
+    const totalSupply = await getTotalSupply(blockNumber);
     
-    // Step 3: Get ETH balances of all holders
-    const balances = await getEthBalancesMulticall(holders, blockNumber);
-    console.log(`Retrieved ${balances.length} balances`);
+    // Step 3: Get token owners using multicall
+    const holders = await getTokenOwners(totalSupply, blockNumber);
     
-    if (balances.length !== holders.length) {
-      console.warn(`Warning: Number of balances (${balances.length}) doesn't match holders (${holders.length})`);
-    }
-    
-    // Step 4: Sum total ETH value
-    const totalWei = balances.reduce((sum, balance) => sum.add(balance), ethers.BigNumber.from(0));
+    // Step 4: Get ETH balances using multicall
+    const totalWei = await getEthBalancesMulticall(holders, blockNumber);
     const totalEth = ethers.utils.formatEther(totalWei);
     
     const executionTime = Date.now() - startTime;
     console.log(`Total ETH value: ${totalEth} ETH (execution time: ${executionTime}ms)`);
     
     const result = {
-      blockNumber,
-      holderCount: holders.length,
-      totalWei,
       totalEth,
+      totalWei,
+      holderCount: holders.length,
+      sampledHolders: holders.length,
       executionTime,
-      method: 'The Graph', // Adding method used for holders data for comparison
+      block: blockNumber,
       implementation: 'multicall'
     };
     
@@ -567,8 +333,7 @@ async function getTotalEthValueOfHolders(timestamp) {
       totalWei: ethers.BigNumber.from(0),
       totalEth: "0",
       executionTime,
-      method: 'The Graph (errored)',
-      implementation: 'multicall'
+      implementation: "multicall-error"
     };
   }
 }
@@ -579,25 +344,30 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { timestamp } = req.body;
+    const { timestamp, useCache } = req.body;
+    
     if (!timestamp) {
       return res.status(400).json({ message: 'Timestamp is required' });
     }
-    
+
     // Check if we have cached results
-    const previousResults = getPreviousResults();
-    const cachedResult = previousResults?.['multicall']?.[timestamp];
-    
-    if (cachedResult && req.body.useCache !== false) {
-      console.log(`Using cached result for timestamp ${timestamp}`);
+    if (useCache !== false) {
+      const previousResults = getPreviousResults();
+      const cachedResult = previousResults?.['multicall']?.[timestamp];
       
-      // Convert string back to BigNumber for consistency
-      cachedResult.totalWei = ethers.BigNumber.from(cachedResult.totalWei);
-      
-      return res.status(200).json({
-        ...cachedResult,
-        fromCache: true
-      });
+      if (cachedResult) {
+        console.log(`Using cached result for timestamp ${timestamp}`);
+        
+        // Convert string back to BigNumber for consistency
+        if (cachedResult.totalWei) {
+          cachedResult.totalWei = ethers.BigNumber.from(cachedResult.totalWei);
+        }
+        
+        return res.status(200).json({
+          ...cachedResult,
+          fromCache: true
+        });
+      }
     }
 
     const result = await getTotalEthValueOfHolders(timestamp);

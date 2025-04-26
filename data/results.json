@@ -11,14 +11,14 @@
       "timestamp": "2025-04-25T15:14:21.207Z"
     },
     "1745280000": {
-      "blockNumber": 22320819,
-      "holderCount": 5475,
-      "totalWei": "102615108184572205391737",
       "totalEth": "102615.108184572205391737",
-      "executionTime": 22503,
-      "method": "The Graph",
+      "totalWei": "102615108184572205391737",
+      "holderCount": 5475,
+      "sampledHolders": 5475,
+      "executionTime": 146408,
+      "block": 22320818,
       "implementation": "multicall",
-      "timestamp": "2025-04-26T08:41:15.569Z"
+      "timestamp": "2025-04-26T08:59:56.387Z"
     },
     "1745604837": {
       "blockNumber": 22347754,
@@ -87,10 +87,44 @@
       "totalWei": "102615108184572205391737",
       "holderCount": 5475,
       "sampledHolders": 5475,
-      "executionTime": 152624,
+      "executionTime": 144999,
       "block": 22320818,
       "implementation": "pure-multicall",
-      "timestamp": "2025-04-26T07:04:45.452Z"
+      "timestamp": "2025-04-26T08:56:24.251Z"
+    }
+  },
+  "graph": {
+    "1651363200": {
+      "blockNumber": 14688630,
+      "holderCount": 6346,
+      "totalWei": "170379574791625785326849",
+      "totalEth": "170379.574791625785326849",
+      "executionTime": 25229,
+      "method": "The Graph",
+      "implementation": "graph",
+      "timestamp": "2025-04-26T08:56:53.682Z"
+    },
+    "1745280000": {
+      "blockNumber": 22320819,
+      "holderCount": 5475,
+      "totalWei": "102615108184572205391737",
+      "totalEth": "102615.108184572205391737",
+      "executionTime": 24273,
+      "method": "The Graph",
+      "implementation": "graph",
+      "timestamp": "2025-04-26T09:22:54.163Z"
+    }
+  },
+  "optimizedSolution": {
+    "1745280000": {
+      "blockNumber": 22320819,
+      "holderCount": 5475,
+      "totalWei": "102615108184572205391737",
+      "totalEth": "102615.108184572205391737",
+      "executionTime": 21290,
+      "method": "The Graph",
+      "implementation": "optimizedSolution",
+      "timestamp": "2025-04-26T09:27:36.256Z"
     }
   }
 }
