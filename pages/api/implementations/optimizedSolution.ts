@@ -20,7 +20,16 @@ interface ResultData {
   implementation: string;
   timestamp?: string;
   fromCache?: boolean;
-  totalWei?: any;
+  totalWei?: string | ethers.BigNumber;
+  blockNumber?: number;
+  metrics?: {
+    blockResolutionTime: number;
+    holdersResolutionTime: number;
+    balanceResolutionTime: number;
+    totalTime: number;
+  };
+  method?: string;
+  error?: string;
 }
 
 interface StoredResults {
@@ -58,7 +67,13 @@ interface BlockNumberCache {
 
 interface HoldersCache {
   [key: string]: string[] | Record<string, string | number> | undefined;
-  _timestamps?: Record<string, string | number>;
+  _timestamps?: Record<string, number>;
+}
+
+// Extend this interface for better typing of cached holders by block number
+interface HoldersByBlock {
+  [blockNumber: number]: string[];
+  [blockNumber: string]: string[] | Record<string, number> | undefined;
 }
 
 // Constants
@@ -543,16 +558,22 @@ async function binarySearchBlock(low: number, high: number, targetTimestamp: num
  * - Uses block timestamp ranges for matching instead of just exact blocks
  * - Implements a radius-based lookup to find best match
  */
-async function getBAYCHoldersAtBlock(blockNumber: number) {
+async function getBAYCHoldersAtBlock(blockNumber: number): Promise<string[]> {
   try {
     // Check exact cache hit first (fastest path)
-    if (holdersCache[blockNumber]) {
-      console.log(`Using exact cached ${holdersCache[blockNumber].length} BAYC holders for block ${blockNumber}`);
-      return holdersCache[blockNumber];
+    const blockStr = String(blockNumber);
+    if (holdersCache[blockStr] && Array.isArray(holdersCache[blockStr])) {
+      console.log(`Using exact cached ${(holdersCache[blockStr] as string[]).length} BAYC holders for block ${blockNumber}`);
+      return holdersCache[blockStr] as string[];
     }
     
     // Get the timestamp for this block to enable better matching
-    const block = await provider.getBlock(blockNumber);
+    const currentProvider = initProvider();
+    if (!currentProvider) {
+      throw new Error("Failed to initialize provider");
+    }
+    
+    const block = await currentProvider.getBlock(blockNumber);
     if (!block) {
       throw new Error(`Could not retrieve block ${blockNumber}`);
     }
@@ -568,34 +589,43 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
       await Promise.all(cachedBlocks.map(async (cachedBlock) => {
         try {
           // Skip if we already have this block's timestamp
-          if (holdersCache._timestamps[cachedBlock]) return;
+          if (holdersCache._timestamps && holdersCache._timestamps[cachedBlock]) return;
           
-          const blockData = await provider.getBlock(cachedBlock);
-          if (blockData) {
+          const blockData = await currentProvider.getBlock(cachedBlock);
+          if (blockData && holdersCache._timestamps) {
             holdersCache._timestamps[cachedBlock] = blockData.timestamp;
           }
         } catch (e) {
           console.warn(`Could not get timestamp for cached block ${cachedBlock}`);
         }
       }));
-      console.log(`Built timestamp index for ${Object.keys(holdersCache._timestamps).length} blocks`);
+      
+      if (holdersCache._timestamps) {
+        console.log(`Built timestamp index for ${Object.keys(holdersCache._timestamps).length} blocks`);
+      }
     }
     
     // Find blocks with nearby timestamps (within 1 hour = 3600s)
     // This is much more accurate than using block number differences
     const TIME_RADIUS = 3600;
-    const blocksByTimeDiff = Object.entries(holdersCache._timestamps)
-      .map(([block, timestamp]) => ({
-        block: parseInt(block),
-        timeDiff: Math.abs(Number(timestamp) - blockTimestamp)
-      }))
-      .filter(entry => entry.timeDiff < TIME_RADIUS)
-      .sort((a, b) => a.timeDiff - b.timeDiff);
-    
-    if (blocksByTimeDiff.length > 0) {
-      const bestMatch = blocksByTimeDiff[0];
-      console.log(`Found cached holders from block ${bestMatch.block} with timestamp ${holdersCache._timestamps[bestMatch.block]} (${bestMatch.timeDiff}s difference)`);
-      return holdersCache[bestMatch.block];
+    if (holdersCache._timestamps) {
+      const blocksByTimeDiff = Object.entries(holdersCache._timestamps)
+        .map(([block, timestamp]) => ({
+          block: parseInt(block),
+          timeDiff: Math.abs(Number(timestamp) - blockTimestamp)
+        }))
+        .filter(entry => entry.timeDiff < TIME_RADIUS)
+        .sort((a, b) => a.timeDiff - b.timeDiff);
+      
+      if (blocksByTimeDiff.length > 0) {
+        const bestMatch = blocksByTimeDiff[0];
+        const bestMatchStr = String(bestMatch.block);
+        
+        if (holdersCache._timestamps && holdersCache[bestMatchStr] && Array.isArray(holdersCache[bestMatchStr])) {
+          console.log(`Found cached holders from block ${bestMatch.block} with timestamp ${holdersCache._timestamps[bestMatchStr]} (${bestMatch.timeDiff}s difference)`);
+          return holdersCache[bestMatchStr] as string[];
+        }
+      }
     }
     
     // Traditional block-number-based lookup as fallback
@@ -610,14 +640,20 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
       
       // Use the closest block (preferring before)
       if (blocksBefore.length > 0 && blockNumber - blocksBefore[0] < 1000) {
-        console.log(`Using nearby cached holders from block ${blocksBefore[0]} (${blockNumber - blocksBefore[0]} blocks earlier)`);
-        return holdersCache[blocksBefore[0]];
+        const beforeBlockStr = String(blocksBefore[0]);
+        if (holdersCache[beforeBlockStr] && Array.isArray(holdersCache[beforeBlockStr])) {
+          console.log(`Using nearby cached holders from block ${blocksBefore[0]} (${blockNumber - blocksBefore[0]} blocks earlier)`);
+          return holdersCache[beforeBlockStr] as string[];
+        }
       }
       
       // Use block after if it's close enough
       if (blocksAfter.length > 0 && blocksAfter[0] - blockNumber < 100) {
-        console.log(`Using nearby cached holders from block ${blocksAfter[0]} (${blocksAfter[0] - blockNumber} blocks later)`);
-        return holdersCache[blocksAfter[0]];
+        const afterBlockStr = String(blocksAfter[0]);
+        if (holdersCache[afterBlockStr] && Array.isArray(holdersCache[afterBlockStr])) {
+          console.log(`Using nearby cached holders from block ${blocksAfter[0]} (${blocksAfter[0] - blockNumber} blocks later)`);
+          return holdersCache[afterBlockStr] as string[];
+        }
       }
     }
     
@@ -661,7 +697,7 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
         throw new Error("GraphQL query failed with current batch size");
       }
 
-      const tokens = response.data.data.tokens;
+      const tokens = response.data.data.tokens as Token[];
       console.log(`Retrieved ${tokens.length} tokens in ${queryTime}ms`);
       
       // Add each owner to our Set
@@ -690,7 +726,7 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
             break;
           }
           
-          const moreTokens = batchResponse.data.data.tokens;
+          const moreTokens = batchResponse.data.data.tokens as Token[];
           console.log(`Retrieved additional ${moreTokens.length} tokens`);
           
           if (moreTokens.length === 0) {
@@ -739,7 +775,7 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
           throw new Error("GraphQL query failed with fallback size too");
         }
 
-        const tokens = response.data.data.tokens;
+        const tokens = response.data.data.tokens as Token[];
         if (!tokens.length) {
           console.log("No more tokens to fetch");
           hasMoreTokens = false;
@@ -765,14 +801,16 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
       updateOptimalGraphQLBatchSize(true, FALLBACK_PAGE_SIZE);
     }
 
-    const holderArray = Array.from(holders);
+    const holderArray = Array.from(holders) as string[];
     console.log(`Found ${holderArray.length} total unique BAYC holders`);
     
     // Cache the result with both block number and timestamp
-    // @ts-ignore
-    holdersCache[blockNumber] = holderArray;
-    // @ts-ignore
-    holdersCache._timestamps[blockNumber] = blockTimestamp;
+    holdersCache[blockStr] = holderArray;
+    if (holdersCache._timestamps) {
+      holdersCache._timestamps[blockStr] = blockTimestamp;
+    } else {
+      holdersCache._timestamps = { [blockStr]: blockTimestamp };
+    }
     saveHoldersCache();
     
     return holderArray;
@@ -783,11 +821,17 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
     const holders = await getHoldersFromTokenTransfers(blockNumber);
     
     // Cache this result too
-    holdersCache[blockNumber] = holders;
+    const blockStr = String(blockNumber);
+    holdersCache[blockStr] = holders;
     try {
-      const block = await provider.getBlock(blockNumber);
-      if (block) {
-        holdersCache._timestamps[blockNumber] = block.timestamp;
+      const currentProvider = initProvider();
+      if (currentProvider) {
+        const block = await currentProvider.getBlock(blockNumber);
+        if (block && holdersCache._timestamps) {
+          holdersCache._timestamps[blockStr] = block.timestamp;
+        } else if (block) {
+          holdersCache._timestamps = { [blockStr]: block.timestamp };
+        }
       }
     } catch (e) {
       console.warn(`Could not get timestamp for block ${blockNumber} for caching`);
@@ -1051,7 +1095,7 @@ async function getFallbackBalances(addresses: string[], blockNumber: number) {
 /**
  * Save results to file for persistence
  */
-async function saveResultsToFile(implementationId: string, timestamp: string, result: ResultData): Promise<void> {
+async function saveResultsToFile(implementationId: string, timestamp: string, result: DetailedHolderResult | ResultData): Promise<void> {
   try {
     // Create directory if it doesn't exist
     const dir = path.dirname(RESULTS_FILE_PATH);
@@ -1072,12 +1116,17 @@ async function saveResultsToFile(implementationId: string, timestamp: string, re
     }
     
     // Convert BigNumber to string for JSON storage
-    const resultToSave = {
+    const resultToSave: ResultData = {
       ...result,
-      // @ts-ignore
-      totalWei: result.totalWei?.toString(),
+      totalWei: result.totalWei ? result.totalWei.toString() : '0',
       executionTime: result.executionTime,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      // Ensure required ResultData fields are present
+      block: result.blockNumber || 0,
+      holderCount: result.holderCount || 0,
+      sampledHolders: result.holderCount || 0,
+      implementation: result.implementation || implementationId,
+      totalEth: result.totalEth || '0',
     };
     
     results[implementationId][timestamp] = resultToSave;
@@ -1110,7 +1159,7 @@ function getPreviousResults() {
  * - Implements a pipeline approach with timing data
  * - Better error handling for partial results
  */
-async function getTotalEthValueOfHolders(timestamp: number | string) {
+async function getTotalEthValueOfHolders(timestamp: number | string): Promise<DetailedHolderResult> {
   const startTime = Date.now();
   const metrics = {
     blockResolutionTime: 0,
@@ -1122,16 +1171,23 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
   try {
     // Use in-memory cache for previous results (fastest path)
     const previousResults = getPreviousResults();
-    const cachedResult = previousResults?.['optimizedSolution']?.[timestamp];
+    const cachedResult = previousResults?.['optimizedSolution']?.[timestamp.toString()];
     
     if (cachedResult) {
       console.log(`Using cached result for timestamp ${timestamp}`);
       // Convert string back to BigNumber for consistency
       return {
         ...cachedResult,
-        totalWei: ethers.BigNumber.from(cachedResult.totalWei),
-        fromCache: true
-      };
+        totalWei: ethers.BigNumber.from(cachedResult.totalWei || '0'),
+        fromCache: true,
+        blockNumber: cachedResult.blockNumber || cachedResult.block || 0,
+        holderCount: cachedResult.holderCount || 0,
+        metrics: cachedResult.metrics || metrics,
+        method: cachedResult.method || 'Cached result',
+        implementation: cachedResult.implementation || 'optimizedSolution',
+        totalEth: cachedResult.totalEth || '0',
+        executionTime: cachedResult.executionTime || 0
+      } as DetailedHolderResult;
     }
     
     // ---- Step 1: Get block number at timestamp ----
@@ -1197,7 +1253,7 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
     console.log(`Total ETH value: ${totalEth} ETH (total execution time: ${metrics.totalTime}ms)`);
     
     // ---- Create detailed result ----
-    const result = {
+    const result: DetailedHolderResult = {
       blockNumber,
       holderCount: holders.length,
       totalWei,
@@ -1209,7 +1265,6 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
     };
     
     // Save results for persistence
-    // @ts-ignore - Type mismatch in result object
     await saveResultsToFile('optimizedSolution', timestamp.toString(), result);
     
     return result;
@@ -1218,7 +1273,7 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
     metrics.totalTime = Date.now() - startTime;
     
     return {
-      error: error.message,
+      error: error instanceof Error ? error.message : 'Unknown error',
       blockNumber: 0,
       holderCount: 0,
       totalWei: ethers.BigNumber.from(0),
@@ -1227,8 +1282,27 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
       metrics,
       method: 'Error in pipeline execution',
       implementation: 'optimizedSolution'
-    };
+    } as DetailedHolderResult;
   }
+}
+
+// Define a more specific interface for the return value of getTotalEthValueOfHolders
+interface DetailedHolderResult {
+  blockNumber: number;
+  holderCount: number;
+  totalWei: ethers.BigNumber;
+  totalEth: string;
+  executionTime: number;
+  metrics: {
+    blockResolutionTime: number;
+    holdersResolutionTime: number;
+    balanceResolutionTime: number;
+    totalTime: number;
+  };
+  method: string;
+  implementation: string;
+  error?: string;
+  fromCache?: boolean;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse): Promise<void> {
