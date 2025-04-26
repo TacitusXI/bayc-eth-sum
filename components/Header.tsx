@@ -13,7 +13,7 @@ const Header: React.FC = () => {
           </div>
           
           <nav className="nav">
-            <Link href="https://github.com/USERNAME/bayc-eth-sum" target="_blank" rel="noopener noreferrer">
+            <Link href="https://github.com/TacitusXI/bayc-eth-sum" target="_blank" rel="noopener noreferrer">
               <span className="nav-link">GitHub</span>
             </Link>
           </nav>
