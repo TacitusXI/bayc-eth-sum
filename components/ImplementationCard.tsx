@@ -1,4 +1,39 @@
-const ImplementationCard = ({ implementation, result, loading, error, onRun }) => {
+import React from 'react';
+
+interface Implementation {
+  id: string;
+  name: string;
+  description: string;
+  status: 'implemented' | 'planned';
+  estimate?: string;
+}
+
+interface Result {
+  totalEth: string;
+  holderCount: number;
+  sampledHolders?: number;
+  block?: number;
+  blockNumber?: number;
+  executionTime: number;
+  implementationNotes?: string;
+  isMock?: boolean;
+}
+
+interface ImplementationCardProps {
+  implementation: Implementation;
+  result?: Result | null;
+  loading: boolean;
+  error?: string | null;
+  onRun: (implementation: Implementation) => void;
+}
+
+const ImplementationCard: React.FC<ImplementationCardProps> = ({ 
+  implementation, 
+  result, 
+  loading, 
+  error, 
+  onRun 
+}) => {
   const isImplemented = implementation.status === 'implemented';
   const isMock = result?.isMock;
   
@@ -15,7 +50,7 @@ const ImplementationCard = ({ implementation, result, loading, error, onRun }) =
       
       <p className="description">{implementation.description}</p>
       
-      {implementation.status === 'planned' && (
+      {implementation.status === 'planned' && implementation.estimate && (
         <div className="estimate">
           <span className="estimate-label">Estimated Performance:</span>
           <span className="estimate-value">{implementation.estimate}</span>
@@ -249,7 +284,26 @@ const ImplementationCard = ({ implementation, result, loading, error, onRun }) =
         .result-header h4 {
           margin: 0;
           font-size: 1rem;
-          color: var(--foreground);
+          color: var(--gray-800);
+        }
+        
+        .badge {
+          display: inline-block;
+          padding: 0.25rem 0.5rem;
+          border-radius: 9999px;
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        
+        .badge-primary {
+          background-color: var(--primary);
+          color: white;
+        }
+        
+        .badge-warning {
+          background-color: var(--warning);
+          color: var(--gray-800);
         }
         
         .result-grid {
@@ -264,47 +318,39 @@ const ImplementationCard = ({ implementation, result, loading, error, onRun }) =
           gap: 0.25rem;
         }
         
-        .result-item.execution-time {
+        .execution-time {
           grid-column: span 2;
-          margin-top: 0.5rem;
-          padding-top: 0.5rem;
-          border-top: 1px solid var(--border-color);
         }
         
         .result-label {
           font-size: 0.75rem;
           color: var(--gray-600);
+          font-weight: 500;
         }
         
         .result-value {
           font-size: 0.875rem;
+          color: var(--gray-800);
           font-weight: 600;
-          color: var(--foreground);
-          font-family: var(--font-mono);
-        }
-        
-        .execution-time .result-value {
-          color: var(--primary);
         }
         
         .implementation-notes {
           margin-top: 1rem;
+          font-size: 0.875rem;
         }
         
         .implementation-notes summary {
-          font-size: 0.875rem;
-          color: var(--gray-600);
+          color: var(--primary);
           cursor: pointer;
+          font-weight: 500;
         }
         
         .notes-content {
           margin-top: 0.5rem;
           padding: 0.75rem;
-          background-color: var(--card-bg);
+          background-color: var(--gray-50);
           border-radius: var(--border-radius);
-          font-size: 0.75rem;
-          color: var(--gray-600);
-          white-space: pre-line;
+          color: var(--gray-700);
         }
       `}</style>
     </div>

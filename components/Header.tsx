@@ -1,13 +1,14 @@
 import Link from 'next/link';
+import React from 'react';
 
-const Header = () => {
+const Header: React.FC = () => {
   return (
     <header className="header">
       <div className="container">
         <div className="header-content">
           <div className="logo">
             <Link href="/">
-              <span className="logo-text">Bored Ape Holders’ ETH Tracker</span>
+              <span className="logo-text">Bored Ape Holders' ETH Tracker</span>
             </Link>
           </div>
           

@@ -8,6 +8,8 @@ import {
   Title,
   Tooltip,
   Legend,
+  ChartData,
+  ChartOptions
 } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 
@@ -22,15 +24,49 @@ ChartJS.register(
   Legend
 );
 
-const PerformanceChart = ({ results }) => {
-  const [chartData, setChartData] = useState({
+interface ResultItem {
+  executionTime: number;
+  totalEth: string;
+  holderCount: number;
+  block?: number;
+  blockNumber?: number;
+  fromCache?: boolean;
+}
+
+interface Results {
+  [id: string]: ResultItem;
+}
+
+interface ComparisonData {
+  executionDiff: number;
+  fasterImplementation: string;
+  speedupFactor: string;
+  holderCountDiff: number;
+  totalEthDiff: string;
+}
+
+interface ChartInfo {
+  executionTimes: number[];
+  relativePerformance: number[];
+  labels: string[];
+  implementations: string[];
+}
+
+interface PerformanceChartProps {
+  results: Results;
+}
+
+type ViewMode = 'executionTime' | 'relativeSpeed';
+
+const PerformanceChart: React.FC<PerformanceChartProps> = ({ results }) => {
+  const [chartData, setChartData] = useState<ChartData<'bar'>>({
     labels: [],
     datasets: [],
   });
   
-  const [viewMode, setViewMode] = useState('executionTime'); // 'executionTime' or 'relativeSpeed'
-  const [comparisonData, setComparisonData] = useState(null);
-  const [chartInfo, setChartInfo] = useState({
+  const [viewMode, setViewMode] = useState<ViewMode>('executionTime');
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
+  const [chartInfo, setChartInfo] = useState<ChartInfo>({
     executionTimes: [],
     relativePerformance: [],
     labels: [],
@@ -82,7 +118,7 @@ const PerformanceChart = ({ results }) => {
     const multicallResult = results['multicall'];
     
     if (pureMulticallResult && multicallResult) {
-      const comparison = {
+      const comparison: ComparisonData = {
         executionDiff: Math.abs(pureMulticallResult.executionTime - multicallResult.executionTime),
         fasterImplementation: pureMulticallResult.executionTime < multicallResult.executionTime ? 'pure-multicall' : 'multicall',
         speedupFactor: pureMulticallResult.executionTime < multicallResult.executionTime ? 
@@ -112,9 +148,15 @@ const PerformanceChart = ({ results }) => {
   }, [viewMode, chartInfo]);
 
   // Function to update chart data based on view mode
-  const updateChartData = (mode, labels, implementations, executionTimes, relativePerformance) => {
+  const updateChartData = (
+    mode: ViewMode, 
+    labels: string[], 
+    implementations: string[], 
+    executionTimes: number[], 
+    relativePerformance: number[]
+  ) => {
     // Colors based on implementation
-    const getColor = (id) => {
+    const getColor = (id: string): string => {
       if (id === 'multicall') return 'rgba(54, 162, 235, 0.7)'; // Blue for Hybrid
       if (id === 'pure-multicall') return 'rgba(75, 192, 192, 0.7)'; // Teal for Full Multicall
       if (id === 'basic') return 'rgba(255, 99, 132, 0.7)'; // Red for individual RPC calls
@@ -150,8 +192,8 @@ const PerformanceChart = ({ results }) => {
     }
   };
 
-  const getOptions = () => {
-    const baseOptions = {
+  const getOptions = (): ChartOptions<'bar'> => {
+    const baseOptions: ChartOptions<'bar'> = {
       responsive: true,
       plugins: {
         legend: {
@@ -175,7 +217,7 @@ const PerformanceChart = ({ results }) => {
               }
               
               // For execution time
-              const value = context.raw;
+              const value = context.raw as number;
               // Format differently based on the size
               if (value >= 3600) {
                 return `Execution time: ${(value/3600).toFixed(1)} hours`;
@@ -187,7 +229,7 @@ const PerformanceChart = ({ results }) => {
             },
             afterLabel: (context) => {
               const index = context.dataIndex;
-              const labelText = context.chart.data.labels[index];
+              const labelText = context.chart.data.labels?.[index] as string;
               // Convert back to original ID
               let originalId;
               if (labelText === 'Hybrid Graph+Multicall') originalId = 'multicall';
@@ -227,7 +269,8 @@ const PerformanceChart = ({ results }) => {
           },
           ticks: {
             color: 'rgba(229, 229, 229, 0.7)', // Light text for ticks
-            callback: function(value) {
+            callback: function(tickValue: string | number) {
+              const value = Number(tickValue);
               if (viewMode === 'executionTime') {
                 if (value >= 3600) {
                   return `${(value/3600).toFixed(1)}h`;
@@ -251,172 +294,154 @@ const PerformanceChart = ({ results }) => {
         }
       }
     };
-    
+
     return baseOptions;
   };
 
-  // Only render if we have data
-  if (chartData.labels.length === 0) {
-    return <div className="chart-placeholder">Run implementations to see performance comparison</div>;
-  }
-
   return (
-    <div className="chart-section">
-      <div className="view-toggle">
-        <button 
-          className={`toggle-btn ${viewMode === 'executionTime' ? 'active' : ''}`}
-          onClick={() => setViewMode('executionTime')}
-        >
-          Execution Time
-        </button>
-        <button 
-          className={`toggle-btn ${viewMode === 'relativeSpeed' ? 'active' : ''}`}
-          onClick={() => setViewMode('relativeSpeed')}
-        >
-          Relative Speed
-        </button>
+    <div className="performance-chart">
+      <div className="chart-controls">
+        <h3>Performance Comparison</h3>
+        <div className="view-toggle">
+          <button 
+            className={`toggle-button ${viewMode === 'executionTime' ? 'active' : ''}`}
+            onClick={() => setViewMode('executionTime')}
+          >
+            Execution Time
+          </button>
+          <button 
+            className={`toggle-button ${viewMode === 'relativeSpeed' ? 'active' : ''}`}
+            onClick={() => setViewMode('relativeSpeed')}
+          >
+            Relative Speed
+          </button>
+        </div>
       </div>
-      
+
       <div className="chart-container">
-        <Bar data={chartData} options={getOptions()} />
+        {chartData.labels && chartData.labels.length > 0 ? (
+          <Bar data={chartData} options={getOptions()} />
+        ) : (
+          <div className="no-data">Run implementations to see performance comparison</div>
+        )}
       </div>
-      
+
       {comparisonData && (
-        <div className="comparison-box">
-          <h3>Implementation Comparison</h3>
-          <div className="comparison-content">
+        <div className="comparison">
+          <h4>Implementation Comparison</h4>
+          <p>
+            <span className="highlight">{comparisonData.fasterImplementation === 'pure-multicall' ? 'Full Multicall' : 'Hybrid Graph+Multicall'}</span> 
+            is <span className="highlight">{comparisonData.speedupFactor}x faster</span> 
+            ({(comparisonData.executionDiff/1000).toFixed(2)}s difference)
+          </p>
+          {comparisonData.holderCountDiff > 0 && (
             <p>
-              <strong>{comparisonData.fasterImplementation === 'pure-multicall' ? 'Full Multicall' : 'Hybrid Graph+Multicall'}</strong> was <strong>{comparisonData.speedupFactor}x faster</strong> 
-              ({(comparisonData.executionDiff / 1000).toFixed(2)} seconds difference)
+              Holder difference: <span className="highlight">{comparisonData.holderCountDiff}</span> accounts
+              <br />
+              ETH total difference: <span className="highlight">{comparisonData.totalEthDiff}</span> ETH
             </p>
-            
-            <div className="comparison-details">
-              <div className="detail-item">
-                <span className="detail-label">Holder Count Difference:</span> 
-                <span className="detail-value">{comparisonData.holderCountDiff} addresses</span>
-              </div>
-              <div className="detail-item">
-                <span className="detail-label">Total ETH Difference:</span> 
-                <span className="detail-value">{comparisonData.totalEthDiff} ETH</span>
-              </div>
-            </div>
-            
-            <div className="note">
-              <p>Note: The Hybrid Graph+Multicall approach relies on The Graph for token holder data which can be more accurate,
-              while the Full Multicall implementation queries everything directly from the blockchain without external services.</p>
-            </div>
-          </div>
+          )}
+          <p className="note">
+            <strong>Note:</strong> Differences in holder count can affect accuracy. The hybrid implementation may be more accurate due to The Graph's comprehensive data indexing.
+          </p>
         </div>
       )}
-      
+
       <style jsx>{`
-        .chart-section {
+        .performance-chart {
+          background-color: var(--card-bg);
+          border-radius: var(--border-radius);
+          padding: 1.5rem;
+          box-shadow: var(--shadow);
           margin-top: 2rem;
+        }
+        
+        .chart-controls {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1.5rem;
+        }
+        
+        .chart-controls h3 {
+          margin: 0;
+          font-size: 1.25rem;
+          color: var(--foreground);
         }
         
         .view-toggle {
           display: flex;
-          justify-content: center;
-          margin-bottom: 1rem;
-        }
-        
-        .toggle-btn {
-          background: var(--card-bg);
-          border: 1px solid var(--border-color);
-          color: var(--text-color);
-          padding: 0.5rem 1rem;
-          margin: 0 0.5rem;
           border-radius: var(--border-radius);
+          overflow: hidden;
+          border: 1px solid var(--border-color);
+        }
+        
+        .toggle-button {
+          padding: 0.5rem 1rem;
+          background: none;
+          border: none;
+          font-size: 0.875rem;
           cursor: pointer;
-          transition: all 0.2s ease;
+          color: var(--foreground);
         }
         
-        .toggle-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
-        }
-        
-        .toggle-btn.active {
-          background: var(--primary);
+        .toggle-button.active {
+          background-color: var(--primary);
           color: white;
-          border-color: var(--primary);
-          box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+        }
+        
+        .toggle-button:hover:not(.active) {
+          background-color: var(--gray-100);
         }
         
         .chart-container {
-          background: var(--card-bg);
-          border-radius: var(--border-radius);
-          padding: 1.5rem;
-          box-shadow: var(--shadow);
+          height: 400px;
           margin-bottom: 1.5rem;
+          position: relative;
         }
         
-        .comparison-box {
-          background: var(--card-bg);
-          border-radius: var(--border-radius);
-          padding: 1.5rem;
-          box-shadow: var(--shadow);
-          color: var(--text-color);
-        }
-        
-        .comparison-box h3 {
-          margin-top: 0;
-          margin-bottom: 1rem;
-          font-size: 1.2rem;
-          color: var(--primary);
-          border-bottom: 1px solid var(--border-color);
-          padding-bottom: 0.5rem;
-        }
-        
-        .comparison-content {
-          font-size: 0.95rem;
-        }
-        
-        .comparison-details {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 1rem;
-          margin: 1.5rem 0;
-        }
-        
-        .detail-item {
+        .no-data {
           display: flex;
-          flex-direction: column;
-          background: rgba(0, 0, 0, 0.2);
-          padding: 0.75rem;
-          border-radius: 0.5rem;
+          align-items: center;
+          justify-content: center;
+          height: 100%;
+          color: var(--gray-500);
+          font-style: italic;
+          text-align: center;
+          padding: 2rem;
         }
         
-        .detail-label {
-          font-size: 0.8rem;
-          color: var(--gray-400);
-          margin-bottom: 0.25rem;
+        .comparison {
+          background-color: var(--card-bg-hover);
+          padding: 1.25rem;
+          border-radius: var(--border-radius);
+          margin-top: 1.5rem;
         }
         
-        .detail-value {
-          font-size: 1.1rem;
+        .comparison h4 {
+          margin-top: 0;
+          margin-bottom: 0.75rem;
+          font-size: 1.125rem;
+          color: var(--foreground);
+        }
+        
+        .comparison p {
+          margin: 0.5rem 0;
+          font-size: 0.875rem;
+          color: var(--gray-700);
+        }
+        
+        .highlight {
+          color: var(--primary);
           font-weight: 600;
         }
         
         .note {
-          font-size: 0.85rem;
-          font-style: italic;
-          opacity: 0.8;
-          background: rgba(255, 255, 255, 0.05);
-          padding: 0.75rem;
-          border-radius: 0.5rem;
-          border-left: 3px solid var(--gray-500);
-        }
-        
-        .chart-placeholder {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          height: 300px;
-          background: var(--card-bg);
-          border-radius: var(--border-radius);
-          box-shadow: var(--shadow);
-          color: var(--gray-500);
-          font-style: italic;
+          margin-top: 1rem;
+          font-size: 0.8125rem;
+          color: var(--gray-600);
+          padding-top: 0.75rem;
+          border-top: 1px solid var(--border-color);
         }
       `}</style>
     </div>
