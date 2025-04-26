@@ -887,7 +887,7 @@ async function getEthBalancesgraph(addresses: string[], blockNumber: number) {
     
     // Using optimal chunk size of 6000 based on testing
     // This allows for retrieving most BAYC holders' balances in a single call
-    const chunkSize = 8000;
+    const chunkSize = 5000;
     let balances = new Array(addresses.length).fill(ethers.BigNumber.from(0));
     
     // Prepare the getEthBalance function signature once
