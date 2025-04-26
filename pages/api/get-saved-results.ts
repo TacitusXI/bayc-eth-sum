@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { NextApiRequest, NextApiResponse } from 'next';
 
 // Use the same path as in implementation files
 const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');
 
-export default async function handler(req, res) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ message: 'Method not allowed' });
   }
@@ -23,7 +24,7 @@ export default async function handler(req, res) {
     console.error('Error reading results file:', error);
     return res.status(500).json({ 
       message: 'Error reading saved results', 
-      error: error.message 
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 } 

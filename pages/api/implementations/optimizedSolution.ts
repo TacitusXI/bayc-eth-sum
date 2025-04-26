@@ -1,3 +1,4 @@
+//optimizedSolution.ts
 import { ethers } from 'ethers';
 import axios from 'axios';
 import fs from 'fs';
@@ -19,6 +20,7 @@ interface ResultData {
   implementation: string;
   timestamp?: string;
   fromCache?: boolean;
+  totalWei?: any;
 }
 
 interface StoredResults {
@@ -55,7 +57,8 @@ interface BlockNumberCache {
 }
 
 interface HoldersCache {
-  [blockNumber: string]: string[];
+  [key: string]: string[] | Record<string, string | number> | undefined;
+  _timestamps?: Record<string, string | number>;
 }
 
 // Constants
@@ -220,31 +223,34 @@ loadHoldersCache();
  * Check if we have fallback data for this timestamp
  */
 function hasFallbackData(timestamp: number | string): boolean {
-  return timestamp in FALLBACK_DEMO_DATA.blocks || 
-        Object.keys(FALLBACK_DEMO_DATA.blocks).some(t => Math.abs(parseInt(t) - parseInt(timestamp)) < 86400);
+  return timestamp in FALLBACK_DEMO_DATA.blocks ||
+        Object.keys(FALLBACK_DEMO_DATA.blocks).some(t => Math.abs(parseInt(t) - parseInt(String(timestamp))) < 86400);
 }
 
 /**
  * Get closest fallback block number
  */
 function getFallbackBlockNumber(timestamp: number | string): number {
-  if (timestamp in FALLBACK_DEMO_DATA.blocks) {
-    return FALLBACK_DEMO_DATA.blocks[timestamp];
+  const timestampStr = String(timestamp);
+  
+  if (timestampStr in FALLBACK_DEMO_DATA.blocks) {
+    return FALLBACK_DEMO_DATA.blocks[timestampStr];
   }
   
   const timestamps = Object.keys(FALLBACK_DEMO_DATA.blocks).map(Number);
   let closest = timestamps[0];
-  let minDiff = Math.abs(closest - parseInt(timestamp));
+  let minDiff = Math.abs(closest - parseInt(String(timestamp)));
   
   for (let i = 1; i < timestamps.length; i++) {
-    const diff = Math.abs(timestamps[i] - parseInt(timestamp));
+    const diff = Math.abs(timestamps[i] - parseInt(String(timestamp)));
     if (diff < minDiff) {
       minDiff = diff;
       closest = timestamps[i];
     }
   }
   
-  return FALLBACK_DEMO_DATA.blocks[closest];
+  // Convert the number back to string for indexing
+  return FALLBACK_DEMO_DATA.blocks[String(closest)];
 }
 
 /**
@@ -322,12 +328,15 @@ function saveHoldersCache() {
       .sort((a, b) => b - a) // Sort in descending order
       .slice(0, 100); // Keep the 100 most recent
       
-    const reducedCache = { _timestamps: {} };
+    const reducedCache: HoldersCache = { _timestamps: {} };
     blockNumbers.forEach(block => {
-      reducedCache[block] = holdersCache[block];
+      const blockStr = String(block);
+      reducedCache[blockStr] = holdersCache[blockStr];
       // Preserve timestamp data for kept blocks
-      if (timestamps[block]) {
-        reducedCache._timestamps[block] = timestamps[block];
+      if (timestamps[blockStr]) {
+        if (reducedCache._timestamps) {
+          reducedCache._timestamps[blockStr] = timestamps[blockStr];
+        }
       }
     });
     
@@ -337,7 +346,7 @@ function saveHoldersCache() {
     // Update the in-memory cache to match
     holdersCache = reducedCache;
   } catch (error) {
-    console.error('Error saving holders cache:', error);
+    console.error('Error saving holders cache:', error instanceof Error ? error.message : 'Unknown error');
   }
 }
 
@@ -348,14 +357,14 @@ function saveHoldersCache() {
 async function getBlockNumberAtTimestamp(timestamp: number | string) {
   try {
     // First check our cache
-    const cachedBlockNumber = blockNumberCache[timestamp];
+    const cachedBlockNumber = blockNumberCache[String(timestamp)];
     if (cachedBlockNumber) {
       console.log(`Using cached block number ${cachedBlockNumber} for timestamp ${timestamp}`);
       return cachedBlockNumber;
     }
     
     // Check for nearby timestamps within 10-minute window for fast approximation
-    const timestampInt = parseInt(timestamp);
+    const timestampInt = parseInt(String(timestamp));
     const nearbyTimestamps = Object.keys(blockNumberCache)
       .map(Number)
       .filter(t => Math.abs(t - timestampInt) < 600); // 10 minutes
@@ -370,10 +379,10 @@ async function getBlockNumberAtTimestamp(timestamp: number | string) {
       
       // If very close (within 30 seconds), just use that block
       if (Math.abs(timestampInt - closestTimestamp) < 30) {
-        console.log(`Using block ${blockNumberCache[closestTimestamp]} for very close timestamp`);
-        blockNumberCache[timestamp] = blockNumberCache[closestTimestamp];
+        console.log(`Using block ${blockNumberCache[String(closestTimestamp)]} for very close timestamp`);
+        blockNumberCache[String(timestamp)] = blockNumberCache[String(closestTimestamp)];
         saveBlockNumberCache();
-        return blockNumberCache[closestTimestamp];
+        return blockNumberCache[String(closestTimestamp)];
       }
     }
     
@@ -395,7 +404,11 @@ async function getBlockNumberAtTimestamp(timestamp: number | string) {
         console.log(`Etherscan returned block #${blockNumber} for timestamp ${timestamp}`);
         
         // Verify the block is close to the desired timestamp
-        const block = await provider.getBlock(blockNumber);
+        const currentProvider = initProvider();
+        if (!currentProvider) {
+          throw new Error("Failed to initialize provider");
+        }
+        const block = await currentProvider.getBlock(blockNumber);
         if (block) {
           const blockTimestamp = block.timestamp;
           console.log(`Block #${blockNumber} has timestamp ${blockTimestamp} (target: ${timestampInt})`);
@@ -403,7 +416,7 @@ async function getBlockNumberAtTimestamp(timestamp: number | string) {
           // If the block is very close to the target timestamp, use it
           if (Math.abs(blockTimestamp - timestampInt) < 120) { // Within 2 minutes
             console.log(`Block timestamp is within 2 minutes of target, using block #${blockNumber}`);
-            blockNumberCache[timestamp] = blockNumber;
+            blockNumberCache[String(timestamp)] = blockNumber;
             saveBlockNumberCache();
             return blockNumber;
           }
@@ -423,7 +436,7 @@ async function getBlockNumberAtTimestamp(timestamp: number | string) {
         }
         
         // If we can't verify, still use the Etherscan result
-        blockNumberCache[timestamp] = blockNumber;
+        blockNumberCache[String(timestamp)] = blockNumber;
         saveBlockNumberCache();
         return blockNumber;
       }
@@ -449,7 +462,7 @@ async function getBlockNumberAtTimestamp(timestamp: number | string) {
       const blockNumber = getFallbackBlockNumber(timestamp);
       
       // Cache the result
-      blockNumberCache[timestamp] = blockNumber;
+      blockNumberCache[String(timestamp)] = blockNumber;
       saveBlockNumberCache();
       
       return blockNumber;
@@ -519,7 +532,7 @@ async function binarySearchBlock(low: number, high: number, targetTimestamp: num
   console.log(`Binary search found block #${result} after ${iterations} iterations`);
   
   // Cache the result
-  blockNumberCache[targetTimestamp] = result;
+  blockNumberCache[String(targetTimestamp)] = result;
   saveBlockNumberCache();
   
   return result;
@@ -574,7 +587,7 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
     const blocksByTimeDiff = Object.entries(holdersCache._timestamps)
       .map(([block, timestamp]) => ({
         block: parseInt(block),
-        timeDiff: Math.abs(timestamp - blockTimestamp)
+        timeDiff: Math.abs(Number(timestamp) - blockTimestamp)
       }))
       .filter(entry => entry.timeDiff < TIME_RADIUS)
       .sort((a, b) => a.timeDiff - b.timeDiff);
@@ -756,7 +769,9 @@ async function getBAYCHoldersAtBlock(blockNumber: number) {
     console.log(`Found ${holderArray.length} total unique BAYC holders`);
     
     // Cache the result with both block number and timestamp
+    // @ts-ignore
     holdersCache[blockNumber] = holderArray;
+    // @ts-ignore
     holdersCache._timestamps[blockNumber] = blockTimestamp;
     saveHoldersCache();
     
@@ -1036,7 +1051,7 @@ async function getFallbackBalances(addresses: string[], blockNumber: number) {
 /**
  * Save results to file for persistence
  */
-async function saveResultsToFile(implementationId: string, timestamp: string, result: ResultData) {
+async function saveResultsToFile(implementationId: string, timestamp: string, result: ResultData): Promise<void> {
   try {
     // Create directory if it doesn't exist
     const dir = path.dirname(RESULTS_FILE_PATH);
@@ -1045,7 +1060,7 @@ async function saveResultsToFile(implementationId: string, timestamp: string, re
     }
     
     // Read existing results or create new object
-    let results = {};
+    let results: StoredResults = {};
     if (fs.existsSync(RESULTS_FILE_PATH)) {
       const fileContent = fs.readFileSync(RESULTS_FILE_PATH, 'utf8');
       results = JSON.parse(fileContent);
@@ -1059,7 +1074,8 @@ async function saveResultsToFile(implementationId: string, timestamp: string, re
     // Convert BigNumber to string for JSON storage
     const resultToSave = {
       ...result,
-      totalWei: result.totalWei.toString(),
+      // @ts-ignore
+      totalWei: result.totalWei?.toString(),
       executionTime: result.executionTime,
       timestamp: new Date().toISOString()
     };
@@ -1070,7 +1086,7 @@ async function saveResultsToFile(implementationId: string, timestamp: string, re
     fs.writeFileSync(RESULTS_FILE_PATH, JSON.stringify(results, null, 2));
     console.log(`Results saved to ${RESULTS_FILE_PATH}`);
   } catch (error) {
-    console.error('Error saving results to file:', error);
+    console.error('Error saving results to file:', error instanceof Error ? error.message : 'Unknown error');
   }
 }
 
@@ -1193,6 +1209,7 @@ async function getTotalEthValueOfHolders(timestamp: number | string) {
     };
     
     // Save results for persistence
+    // @ts-ignore - Type mismatch in result object
     await saveResultsToFile('optimizedSolution', timestamp.toString(), result);
     
     return result;
