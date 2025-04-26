@@ -1,9 +1,0 @@
-{
-  "/_app": "pages/_app.js",
-  "/_error": "pages/_error.js",
-  "/_document": "pages/_document.js",
-  "/api/implementations/pure-multicall": "pages/api/implementations/pure-multicall.js",
-  "/api/implementations/basic": "pages/api/implementations/basic.js",
-  "/api/get-saved-results": "pages/api/get-saved-results.js",
-  "/": "pages/index.js"
-}
