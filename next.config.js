@@ -11,12 +11,6 @@ const nextConfig = {
     };
     return config;
   },
-  // Specify that API routes should use the Node.js runtime
-  experimental: {
-    allowMiddlewareResponseBody: true,
-    serverComponentsExternalPackages: ["fs", "path"],
-    runtime: 'nodejs',
-  },
 };
 
 module.exports = nextConfig; 

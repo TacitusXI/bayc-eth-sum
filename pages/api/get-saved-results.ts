@@ -1,9 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { NextApiRequest, NextApiResponse } from 'next';
-
-// Configure Edge Runtime (required by Fleek)
-export const runtime = 'edge';
 
 // Use the same path as in implementation files
 const RESULTS_FILE_PATH = path.join(process.cwd(), 'data', 'results.json');

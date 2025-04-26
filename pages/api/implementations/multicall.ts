@@ -1,6 +1,3 @@
-// Add the Edge Runtime configuration at the beginning of the file
-export const runtime = 'edge';
-
 // multicall implementation - uses multicall for ALL RPC queries
 import { ethers } from 'ethers';
 import axios from 'axios';

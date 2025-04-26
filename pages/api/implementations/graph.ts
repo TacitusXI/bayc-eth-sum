@@ -4,9 +4,6 @@ import fs from 'fs';
 import path from 'path';
 import { NextApiRequest, NextApiResponse } from 'next';
 
-// Add the Edge Runtime configuration at the beginning of the file
-export const runtime = 'edge';
-
 // Types
 interface RequestBody {
   timestamp: number;
