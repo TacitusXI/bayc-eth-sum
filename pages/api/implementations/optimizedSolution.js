@@ -75,6 +75,33 @@ let graphContract = null;
 let blockNumberCache = {};
 let holdersCache = {};
 
+// Add module-level variable to track optimal batch sizes
+let optimalGraphQLBatchSize = 10000; // Start with maximum and adjust down if needed
+
+/**
+ * Track and adjust optimal GraphQL batch size based on success/failure
+ */
+function updateOptimalGraphQLBatchSize(success, currentSize) {
+  if (success) {
+    // If we succeeded with a smaller size, we might try increasing slightly next time
+    if (currentSize < optimalGraphQLBatchSize) {
+      optimalGraphQLBatchSize = Math.min(10000, Math.floor(currentSize * 1.25));
+      console.log(`Increasing optimal GraphQL batch size to ${optimalGraphQLBatchSize} for next queries`);
+    }
+  } else {
+    // If we failed, reduce the optimal size
+    optimalGraphQLBatchSize = Math.max(500, Math.floor(currentSize * 0.75));
+    console.log(`Reducing optimal GraphQL batch size to ${optimalGraphQLBatchSize} for next queries`);
+  }
+}
+
+/**
+ * Get suggested batch size for GraphQL queries based on history
+ */
+function getSuggestedGraphQLBatchSize() {
+  return optimalGraphQLBatchSize;
+}
+
 /**
  * Initialize provider with Alchemy only
  */
@@ -525,14 +552,18 @@ async function getBAYCHoldersAtBlock(blockNumber) {
     
     console.log(`Querying The Graph for BAYC holders at block ${blockNumber}…`);
     
-    const PAGE_SIZE = 1000;
+    // Use adaptive batch size mechanism
+    const PAGE_SIZE = getSuggestedGraphQLBatchSize();
+    console.log(`Using GraphQL batch size of ${PAGE_SIZE} based on previous performance`);
+    
     let lastId = "";            // cursor: start before the first token
     const holders = new Set();
 
+    // First try with adaptive page size
     const QUERY = `
-      query holders($block: Int!, $lastId: String!) {
+      query holders($block: Int!, $lastId: String!, $pageSize: Int!) {
         tokens(
-          first: ${PAGE_SIZE},
+          first: $pageSize,
           where: { id_gt: $lastId },
           block: { number: $block },
           orderBy: id,
@@ -544,32 +575,123 @@ async function getBAYCHoldersAtBlock(blockNumber) {
       }
     `;
 
-    while (true) {
-      console.log(`Fetching tokens after id='${lastId}'…`);
+    try {
+      // First attempt with adaptive page size
+      console.log(`Attempting to fetch tokens with page size: ${PAGE_SIZE}...`);
+      const startTime = Date.now();
       const response = await axios.post(GRAPH_URL, {
         query: QUERY,
-        variables: { block: blockNumber, lastId }
+        variables: { block: blockNumber, lastId, pageSize: PAGE_SIZE }
       });
+      const queryTime = Date.now() - startTime;
 
       if (response.data.errors) {
-        console.error("GraphQL errors:", response.data.errors);
-        throw new Error("GraphQL query failed");
+        // If we get errors, throw to fall back to smaller batches
+        throw new Error("GraphQL query failed with current batch size");
       }
 
       const tokens = response.data.data.tokens;
-      if (!tokens.length) {
-        console.log("No more tokens to fetch");
-        break;
-      }
-
+      console.log(`Retrieved ${tokens.length} tokens in ${queryTime}ms`);
+      
       // Add each owner to our Set
       tokens.forEach(t => holders.add(t.owner.id.toLowerCase()));
+      
+      // If we got fewer than requested, we got all of them
+      if (tokens.length < PAGE_SIZE) {
+        console.log(`Got all tokens in one request (${tokens.length} tokens)`);
+        // Mark this batch size as successful
+        updateOptimalGraphQLBatchSize(true, PAGE_SIZE);
+      } else {
+        // We need to get the rest with additional queries
+        lastId = tokens[tokens.length - 1].id;
+        console.log(`Got first batch, continuing from id=${lastId}`);
+        
+        // For remaining tokens, continue fetching until we get all
+        let hasMoreTokens = true;
+        while (hasMoreTokens) {
+          const batchResponse = await axios.post(GRAPH_URL, {
+            query: QUERY,
+            variables: { block: blockNumber, lastId, pageSize: PAGE_SIZE }
+          });
+          
+          if (batchResponse.data.errors) {
+            console.warn("GraphQL errors in follow-up batch:", batchResponse.data.errors);
+            break;
+          }
+          
+          const moreTokens = batchResponse.data.data.tokens;
+          console.log(`Retrieved additional ${moreTokens.length} tokens`);
+          
+          if (moreTokens.length === 0) {
+            hasMoreTokens = false;
+            console.log("No more tokens to fetch");
+          } else {
+            moreTokens.forEach(t => holders.add(t.owner.id.toLowerCase()));
+            lastId = moreTokens[moreTokens.length - 1].id;
+            console.log(`  → Total unique owners so far: ${holders.size}`);
+            
+            if (moreTokens.length < PAGE_SIZE) {
+              hasMoreTokens = false;
+              console.log("Reached end of tokens");
+            }
+          }
+        }
+        
+        // Mark this as successful
+        updateOptimalGraphQLBatchSize(true, PAGE_SIZE);
+      }
+    } catch (largeQueryError) {
+      console.warn(`Failed with batch size ${PAGE_SIZE}: ${largeQueryError.message}`);
+      
+      // Update the optimal batch size down
+      updateOptimalGraphQLBatchSize(false, PAGE_SIZE);
+      
+      // Reset and use regular paging with smaller chunks
+      console.log(`Falling back to smaller page sizes...`);
+      lastId = "";
+      holders.clear();
+      
+      // Use a smaller page size for fallback (half of what failed)
+      const FALLBACK_PAGE_SIZE = Math.max(500, Math.floor(PAGE_SIZE / 2));
+      console.log(`Using fallback page size: ${FALLBACK_PAGE_SIZE}`);
+      
+      let hasMoreTokens = true;
+      while (hasMoreTokens) {
+        console.log(`Fetching tokens after id='${lastId}'…`);
+        const response = await axios.post(GRAPH_URL, {
+          query: QUERY,
+          variables: { block: blockNumber, lastId, pageSize: FALLBACK_PAGE_SIZE }
+        });
 
-      // Advance cursor to the last token ID of this page
-      lastId = tokens[tokens.length - 1].id;
-      console.log(
-        `  → Fetched ${tokens.length} tokens; unique owners so far: ${holders.size}`
-      );
+        if (response.data.errors) {
+          console.error("GraphQL errors:", response.data.errors);
+          throw new Error("GraphQL query failed with fallback size too");
+        }
+
+        const tokens = response.data.data.tokens;
+        if (!tokens.length) {
+          console.log("No more tokens to fetch");
+          hasMoreTokens = false;
+          break;
+        }
+
+        // Add each owner to our Set
+        tokens.forEach(t => holders.add(t.owner.id.toLowerCase()));
+
+        // Advance cursor to the last token ID of this page
+        lastId = tokens[tokens.length - 1].id;
+        console.log(
+          `  → Fetched ${tokens.length} tokens; unique owners so far: ${holders.size}`
+        );
+        
+        if (tokens.length < FALLBACK_PAGE_SIZE) {
+          hasMoreTokens = false;
+          console.log("Reached end of tokens with fallback size");
+        }
+      }
+      
+      // If successful with fallback, update the optimal size
+      updateOptimalGraphQLBatchSize(true, FALLBACK_PAGE_SIZE);
     }
 
     const holderArray = Array.from(holders);
@@ -705,9 +827,9 @@ async function getEthBalancesgraph(addresses, blockNumber) {
   try {
     console.log(`Getting ETH balances for ${addresses.length} addresses with graph...`);
     
-    // Increase chunk size from 500 to 1000 for fewer network calls
-    // Experiment with this value - some providers can handle up to 2000+
-    const chunkSize = 1000;
+    // Using optimal chunk size of 6000 based on testing
+    // This allows for retrieving most BAYC holders' balances in a single call
+    const chunkSize = 6000;
     let balances = new Array(addresses.length).fill(ethers.BigNumber.from(0));
     
     // Prepare the getEthBalance function signature once

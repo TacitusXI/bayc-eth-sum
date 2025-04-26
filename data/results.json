@@ -104,6 +104,16 @@
       "implementation": "graph",
       "timestamp": "2025-04-26T08:56:53.682Z"
     },
+    "1672531200": {
+      "blockNumber": 16308190,
+      "holderCount": 6184,
+      "totalWei": "146775713304126985190846",
+      "totalEth": "146775.713304126985190846",
+      "executionTime": 36774,
+      "method": "The Graph",
+      "implementation": "graph",
+      "timestamp": "2025-04-26T10:09:02.416Z"
+    },
     "1683158400": {
       "blockNumber": 17183607,
       "holderCount": 5594,
@@ -123,38 +133,50 @@
       "method": "The Graph",
       "implementation": "graph",
       "timestamp": "2025-04-26T09:22:54.163Z"
+    },
+    "1745662249": {
+      "blockNumber": 22352525,
+      "holderCount": 5480,
+      "totalWei": "111187363280716307149733",
+      "totalEth": "111187.363280716307149733",
+      "executionTime": 21684,
+      "method": "The Graph",
+      "implementation": "graph",
+      "timestamp": "2025-04-26T10:11:41.396Z"
     }
   },
   "optimizedSolution": {
-    "1651363200": {
-      "blockNumber": 14688630,
-      "holderCount": 6346,
-      "totalWei": "170379574791625785326849",
-      "totalEth": "170379.574791625785326849",
-      "executionTime": 20557,
-      "method": "The Graph with optimized caching",
-      "implementation": "optimizedSolution",
-      "timestamp": "2025-04-26T10:00:23.049Z"
-    },
-    "1683158400": {
-      "blockNumber": 17183607,
-      "holderCount": 5594,
-      "totalWei": "161869747767496835713486",
-      "totalEth": "161869.747767496835713486",
-      "executionTime": 17253,
-      "method": "The Graph with optimized caching",
-      "implementation": "optimizedSolution",
-      "timestamp": "2025-04-26T10:04:23.412Z"
-    },
     "1745280000": {
-      "blockNumber": 22320819,
+      "blockNumber": 22320818,
       "holderCount": 5475,
       "totalWei": "102615108184572205391737",
       "totalEth": "102615.108184572205391737",
-      "executionTime": 21290,
-      "method": "The Graph",
+      "executionTime": 4471,
+      "metrics": {
+        "blockResolutionTime": 1,
+        "holdersResolutionTime": 1,
+        "balanceResolutionTime": 4459,
+        "totalTime": 4471
+      },
+      "method": "Optimized pipeline with enhanced caching",
       "implementation": "optimizedSolution",
-      "timestamp": "2025-04-26T09:27:36.256Z"
+      "timestamp": "2025-04-26T10:26:36.243Z"
+    },
+    "1745663183": {
+      "blockNumber": 22352602,
+      "holderCount": 5479,
+      "totalWei": "111187122443148917188707",
+      "totalEth": "111187.122443148917188707",
+      "executionTime": 5220,
+      "metrics": {
+        "blockResolutionTime": 1061,
+        "holdersResolutionTime": 254,
+        "balanceResolutionTime": 3895,
+        "totalTime": 5220
+      },
+      "method": "Optimized pipeline with enhanced caching",
+      "implementation": "optimizedSolution",
+      "timestamp": "2025-04-26T10:26:58.613Z"
     }
   }
 }
