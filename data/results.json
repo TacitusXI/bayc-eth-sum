@@ -1,0 +1,96 @@
+{
+  "multicall": {
+    "1651363200": {
+      "blockNumber": 14688630,
+      "holderCount": 6346,
+      "totalWei": "170379574791625785326849",
+      "totalEth": "170379.574791625785326849",
+      "executionTime": 43301,
+      "method": "The Graph",
+      "implementation": "multicall",
+      "timestamp": "2025-04-25T15:14:21.207Z"
+    },
+    "1745280000": {
+      "blockNumber": 22320819,
+      "holderCount": 5475,
+      "totalWei": "102615108184572205391737",
+      "totalEth": "102615.108184572205391737",
+      "executionTime": 27544,
+      "method": "The Graph",
+      "implementation": "multicall",
+      "timestamp": "2025-04-26T07:02:14.587Z"
+    },
+    "1745604837": {
+      "blockNumber": 22347754,
+      "holderCount": 5488,
+      "totalWei": "102991357461353320880338",
+      "totalEth": "102991.357461353320880338",
+      "executionTime": 45057,
+      "method": "The Graph",
+      "implementation": "multicall",
+      "timestamp": "2025-04-25T18:55:51.685Z"
+    }
+  },
+  "multicall-etherscan": {
+    "1651363200": {
+      "blockNumber": 14688629,
+      "holderCount": 446,
+      "totalWei": "3204799925322929412365",
+      "totalEth": "3204.799925322929412365",
+      "executionTime": 11876,
+      "timestamp": "2025-04-25T15:14:49.305Z"
+    }
+  },
+  "basic": {
+    "1651363200": {
+      "totalEth": "9629.954355193526559461",
+      "holderCount": 428,
+      "sampledHolders": 428,
+      "executionTime": 110490,
+      "block": 14688629,
+      "implementation": "basic",
+      "timestamp": "2025-04-25T18:15:52.226Z"
+    },
+    "1745280000": {
+      "totalEth": "102609.315003585386749299",
+      "holderCount": 5474,
+      "sampledHolders": 5474,
+      "executionTime": 7245111,
+      "block": 22320818,
+      "implementation": "basic",
+      "timestamp": "2025-04-26T01:37:51.367Z"
+    },
+    "1745604837": {
+      "totalEth": "102991.357461353320880338",
+      "holderCount": 5488,
+      "sampledHolders": 5488,
+      "executionTime": 2253507,
+      "block": 22347753,
+      "implementation": "basic",
+      "timestamp": "2025-04-25T18:54:51.251Z"
+    }
+  },
+  "cached": {
+    "1651363200": {
+      "totalEth": "599.995473382701929904",
+      "holderCount": 72,
+      "sampledHolders": 72,
+      "executionTime": 8648,
+      "block": 14688629,
+      "implementation": "cached",
+      "timestamp": "2025-04-25T15:19:55.292Z"
+    }
+  },
+  "pure-multicall": {
+    "1745280000": {
+      "totalEth": "102615.108184572205391737",
+      "totalWei": "102615108184572205391737",
+      "holderCount": 5475,
+      "sampledHolders": 5475,
+      "executionTime": 152624,
+      "block": 22320818,
+      "implementation": "pure-multicall",
+      "timestamp": "2025-04-26T07:04:45.452Z"
+    }
+  }
+}
