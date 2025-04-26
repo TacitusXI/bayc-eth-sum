@@ -227,19 +227,27 @@ function saveHoldersCache() {
       fs.mkdirSync(dir, { recursive: true });
     }
     
+    // Get timestamp data before reducing
+    const timestamps = holdersCache._timestamps || {};
+    
     // Only keep the 100 most recent block snapshots to avoid huge files
     const blockNumbers = Object.keys(holdersCache)
+      .filter(k => !k.startsWith('_')) // Skip metadata properties
       .map(Number)
       .sort((a, b) => b - a) // Sort in descending order
       .slice(0, 100); // Keep the 100 most recent
       
-    const reducedCache = {};
+    const reducedCache = { _timestamps: {} };
     blockNumbers.forEach(block => {
       reducedCache[block] = holdersCache[block];
+      // Preserve timestamp data for kept blocks
+      if (timestamps[block]) {
+        reducedCache._timestamps[block] = timestamps[block];
+      }
     });
     
     fs.writeFileSync(HOLDERS_CACHE_FILE, JSON.stringify(reducedCache, null, 2));
-    console.log(`Saved ${Object.keys(reducedCache).length} holder snapshots to cache`);
+    console.log(`Saved ${blockNumbers.length} holder snapshots to cache with timestamp data`);
     
     // Update the in-memory cache to match
     holdersCache = reducedCache;
@@ -249,7 +257,8 @@ function saveHoldersCache() {
 }
 
 /**
- * Find block number at specific timestamp using binary search with caching
+ * Find block number at specific timestamp using Etherscan API with fallback to binary search
+ * Prioritizes direct API lookup which is faster than binary search in most cases
  */
 async function getBlockNumberAtTimestamp(timestamp) {
   try {
@@ -260,11 +269,11 @@ async function getBlockNumberAtTimestamp(timestamp) {
       return cachedBlockNumber;
     }
     
-    // Check for nearby timestamps within 2-hour window
+    // Check for nearby timestamps within 10-minute window for fast approximation
     const timestampInt = parseInt(timestamp);
     const nearbyTimestamps = Object.keys(blockNumberCache)
       .map(Number)
-      .filter(t => Math.abs(t - timestampInt) < 7200); // 2 hours
+      .filter(t => Math.abs(t - timestampInt) < 600); // 10 minutes
     
     if (nearbyTimestamps.length > 0) {
       // Find closest timestamp
@@ -272,149 +281,230 @@ async function getBlockNumberAtTimestamp(timestamp) {
         Math.abs(curr - timestampInt) < Math.abs(prev - timestampInt) ? curr : prev
       );
       
-      // Estimate block number based on 13.5s average block time
-      const blockDiff = Math.round(Math.abs(timestampInt - closestTimestamp) / 13.5);
-      const direction = timestampInt > closestTimestamp ? 1 : -1;
-      const estimatedBlock = blockNumberCache[closestTimestamp] + (blockDiff * direction);
+      console.log(`Found nearby timestamp ${closestTimestamp} (${Math.abs(timestampInt - closestTimestamp)}s difference)`);
       
-      console.log(`Estimated block ${estimatedBlock} for timestamp ${timestamp} based on nearby timestamp ${closestTimestamp}`);
-      
-      // Verify if our estimate is close enough
-      const verifyBlock = await provider.getBlock(estimatedBlock);
-      if (verifyBlock && Math.abs(verifyBlock.timestamp - timestampInt) < 300) { // Within 5 minutes
-        // Cache and return if close enough
-        blockNumberCache[timestamp] = estimatedBlock;
+      // If very close (within 30 seconds), just use that block
+      if (Math.abs(timestampInt - closestTimestamp) < 30) {
+        console.log(`Using block ${blockNumberCache[closestTimestamp]} for very close timestamp`);
+        blockNumberCache[timestamp] = blockNumberCache[closestTimestamp];
         saveBlockNumberCache();
-        return estimatedBlock;
-      }
-      
-      // Use as starting point for binary search otherwise
-      let low = direction > 0 ? blockNumberCache[closestTimestamp] : Math.max(0, estimatedBlock - 1000);
-      let high = direction > 0 ? estimatedBlock + 1000 : blockNumberCache[closestTimestamp];
-      
-      console.log(`Using optimized range for binary search: [${low}, ${high}]`);
-      
-      let result = high;
-      let mid = 0;
-      let iterations = 0;
-      
-      while (low <= high && iterations < 20) {
-        iterations++;
-        mid = Math.floor((low + high) / 2);
-        const block = await provider.getBlock(mid);
-        if (!block) break;
-
-        console.log(`Iteration ${iterations}: Block #${mid} has timestamp ${block.timestamp} (target: ${timestamp})`);
-        
-        if (block.timestamp < timestampInt) {
-          low = mid + 1;
-        } else {
-          result = mid;
-          high = mid - 1;
-        }
-      }
-      
-      console.log(`Found block #${result} for timestamp ${timestamp} in ${iterations} iterations`);
-      
-      // Cache the result
-      blockNumberCache[timestamp] = result;
-      saveBlockNumberCache();
-      
-      return result;
-    }
-
-    // Normal binary search if no cached reference points
-    console.log(`Finding block at or after timestamp ${timestamp} using binary search...`);
-    
-    let low = 0;
-    let high = await provider.getBlockNumber();
-    let result = high;
-    let iterations = 0;
-
-    while (low <= high && iterations < 40) {
-      iterations++;
-      const mid = Math.floor((low + high) / 2);
-      const block = await provider.getBlock(mid);
-      if (!block) break;
-
-      console.log(`Iteration ${iterations}: Block #${mid} has timestamp ${block.timestamp} (target: ${timestamp})`);
-      
-      if (block.timestamp < timestampInt) {
-        low = mid + 1;
-      } else {
-        result = mid;
-        high = mid - 1;
+        return blockNumberCache[closestTimestamp];
       }
     }
-
-    console.log(`Found block #${result} for timestamp ${timestamp} in ${iterations} iterations`);
     
-    // Cache the result
-    blockNumberCache[timestamp] = result;
-    saveBlockNumberCache();
-    
-    return result;
-  } catch (error) {
-    console.error('Error in binary search for block:', error);
-    
-    // Fallback to Etherscan API
+    // Try Etherscan API first - it's faster than binary search in most cases
     try {
-      console.log('Falling back to Etherscan API for block number...');
+      console.log(`Querying Etherscan API for block at timestamp ${timestamp}...`);
       const response = await axios.get(ETHERSCAN_API_URL, {
         params: {
           module: 'block',
           action: 'getblocknobytime',
-          timestamp,
+          timestamp: timestampInt,
           closest: 'before',
           apikey: ETHERSCAN_API_KEY
         }
       });
 
-      if (response.data.status !== '1') {
-        throw new Error(`Etherscan API error: ${response.data.message}`);
+      if (response.data.status === '1') {
+        const blockNumber = parseInt(response.data.result);
+        console.log(`Etherscan returned block #${blockNumber} for timestamp ${timestamp}`);
+        
+        // Verify the block is close to the desired timestamp
+        const block = await provider.getBlock(blockNumber);
+        if (block) {
+          const blockTimestamp = block.timestamp;
+          console.log(`Block #${blockNumber} has timestamp ${blockTimestamp} (target: ${timestampInt})`);
+          
+          // If the block is very close to the target timestamp, use it
+          if (Math.abs(blockTimestamp - timestampInt) < 120) { // Within 2 minutes
+            console.log(`Block timestamp is within 2 minutes of target, using block #${blockNumber}`);
+            blockNumberCache[timestamp] = blockNumber;
+            saveBlockNumberCache();
+            return blockNumber;
+          }
+          
+          // If not close, we can use this as a starting point for binary search
+          // but in a much narrower range
+          console.log(`Block timestamp differs by ${Math.abs(blockTimestamp - timestampInt)}s, refining search...`);
+          
+          // Decide search direction
+          if (blockTimestamp < timestampInt) {
+            // Target is after this block, search forward
+            return await binarySearchBlock(blockNumber, blockNumber + 1000, timestampInt);
+          } else {
+            // Target is before this block, search backward
+            return await binarySearchBlock(Math.max(0, blockNumber - 1000), blockNumber, timestampInt);
+          }
+        }
+        
+        // If we can't verify, still use the Etherscan result
+        blockNumberCache[timestamp] = blockNumber;
+        saveBlockNumberCache();
+        return blockNumber;
       }
       
-      const blockNumber = parseInt(response.data.result);
+      console.warn(`Etherscan API error: ${response.data.message}`);
+      // Fall through to binary search
+    } catch (etherscanError) {
+      console.error('Etherscan lookup failed:', etherscanError.message);
+      // Fall through to binary search
+    }
+
+    // Fall back to binary search if Etherscan fails
+    console.log(`Falling back to binary search for block at timestamp ${timestamp}...`);
+    const currentBlock = await provider.getBlockNumber();
+    return await binarySearchBlock(0, currentBlock, timestampInt);
+    
+  } catch (error) {
+    console.error('Error resolving block for timestamp:', error);
+    
+    // Use fallback data if available
+    if (hasFallbackData(timestamp)) {
+      console.log(`Using fallback block data for timestamp ${timestamp}`);
+      const blockNumber = getFallbackBlockNumber(timestamp);
       
       // Cache the result
       blockNumberCache[timestamp] = blockNumber;
       saveBlockNumberCache();
       
       return blockNumber;
-    } catch (secondaryError) {
-      console.error('Etherscan fallback failed:', secondaryError);
-      
-      // Use fallback data if available
-      if (hasFallbackData(timestamp)) {
-        console.log(`Using fallback block data for timestamp ${timestamp}`);
-        const blockNumber = getFallbackBlockNumber(timestamp);
-        
-        // Cache the result
-        blockNumberCache[timestamp] = blockNumber;
-        saveBlockNumberCache();
-        
-        return blockNumber;
-      }
-      
-      throw error;
     }
+    
+    throw error;
   }
 }
 
 /**
- * Get BAYC holders at a specific block by cursor-paging through tokens → owner
- * With block-based caching for faster repeat queries
+ * Helper function to perform optimized binary search for block number
+ */
+async function binarySearchBlock(low, high, targetTimestamp) {
+  console.log(`Performing binary search in range [${low}, ${high}] for timestamp ${targetTimestamp}`);
+  
+  let result = high;
+  let iterations = 0;
+  let lastMid = 0;
+  let consecutiveErrors = 0;
+  
+  while (low <= high && iterations < 20) {
+    iterations++;
+    const mid = Math.floor((low + high) / 2);
+    
+    // Avoid repeating the same block check
+    if (mid === lastMid) {
+      console.log(`Breaking search loop, reached same block twice: ${mid}`);
+      break;
+    }
+    lastMid = mid;
+    
+    try {
+      const block = await provider.getBlock(mid);
+      if (!block) {
+        console.warn(`No block data for #${mid}, continuing search...`);
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          console.error(`Too many consecutive errors, stopping search`);
+          break;
+        }
+        high = mid - 1;
+        continue;
+      }
+      
+      consecutiveErrors = 0;
+      console.log(`Iteration ${iterations}: Block #${mid} has timestamp ${block.timestamp} (target: ${targetTimestamp})`);
+      
+      if (block.timestamp < targetTimestamp) {
+        low = mid + 1;
+      } else {
+        result = mid;
+        high = mid - 1;
+      }
+    } catch (error) {
+      console.error(`Error getting block #${mid}:`, error.message);
+      consecutiveErrors++;
+      if (consecutiveErrors >= 3) {
+        console.error(`Too many consecutive errors, stopping search`);
+        break;
+      }
+      // Skip this block and try the next one
+      if (mid === low) low += 1;
+      else high = mid - 1;
+    }
+  }
+  
+  console.log(`Binary search found block #${result} after ${iterations} iterations`);
+  
+  // Cache the result
+  blockNumberCache[targetTimestamp] = result;
+  saveBlockNumberCache();
+  
+  return result;
+}
+
+/**
+ * Find holders for a particular block, using timestamp cross-referencing for better cache hits
+ * - Uses block timestamp ranges for matching instead of just exact blocks
+ * - Implements a radius-based lookup to find best match
  */
 async function getBAYCHoldersAtBlock(blockNumber) {
   try {
-    // Check cache first
+    // Check exact cache hit first (fastest path)
     if (holdersCache[blockNumber]) {
-      console.log(`Using cached ${holdersCache[blockNumber].length} BAYC holders for block ${blockNumber}`);
+      console.log(`Using exact cached ${holdersCache[blockNumber].length} BAYC holders for block ${blockNumber}`);
       return holdersCache[blockNumber];
     }
     
-    // Find closest cached block number
-    const cachedBlocks = Object.keys(holdersCache).map(Number);
+    // Get the timestamp for this block to enable better matching
+    const block = await provider.getBlock(blockNumber);
+    if (!block) {
+      throw new Error(`Could not retrieve block ${blockNumber}`);
+    }
+    
+    const blockTimestamp = block.timestamp;
+    console.log(`Block ${blockNumber} has timestamp ${blockTimestamp}`);
+    
+    // Create timestamp-based index of cached blocks if needed
+    if (!holdersCache._timestamps) {
+      holdersCache._timestamps = {};
+      // Index existing blocks by timestamp
+      const cachedBlocks = Object.keys(holdersCache).filter(k => !k.startsWith('_')).map(Number);
+      await Promise.all(cachedBlocks.map(async (cachedBlock) => {
+        try {
+          // Skip if we already have this block's timestamp
+          if (holdersCache._timestamps[cachedBlock]) return;
+          
+          const blockData = await provider.getBlock(cachedBlock);
+          if (blockData) {
+            holdersCache._timestamps[cachedBlock] = blockData.timestamp;
+          }
+        } catch (e) {
+          console.warn(`Could not get timestamp for cached block ${cachedBlock}`);
+        }
+      }));
+      console.log(`Built timestamp index for ${Object.keys(holdersCache._timestamps).length} blocks`);
+    }
+    
+    // Find blocks with nearby timestamps (within 1 hour = 3600s)
+    // This is much more accurate than using block number differences
+    const TIME_RADIUS = 3600;
+    const blocksByTimeDiff = Object.entries(holdersCache._timestamps)
+      .map(([block, timestamp]) => ({
+        block: parseInt(block),
+        timeDiff: Math.abs(timestamp - blockTimestamp)
+      }))
+      .filter(entry => entry.timeDiff < TIME_RADIUS)
+      .sort((a, b) => a.timeDiff - b.timeDiff);
+    
+    if (blocksByTimeDiff.length > 0) {
+      const bestMatch = blocksByTimeDiff[0];
+      console.log(`Found cached holders from block ${bestMatch.block} with timestamp ${holdersCache._timestamps[bestMatch.block]} (${bestMatch.timeDiff}s difference)`);
+      return holdersCache[bestMatch.block];
+    }
+    
+    // Traditional block-number-based lookup as fallback
+    const cachedBlocks = Object.keys(holdersCache)
+      .filter(k => !k.startsWith('_'))
+      .map(Number);
+    
     if (cachedBlocks.length > 0) {
       // Find blocks before and after the target
       const blocksAfter = cachedBlocks.filter(b => b > blockNumber).sort((a, b) => a - b);
@@ -485,8 +575,9 @@ async function getBAYCHoldersAtBlock(blockNumber) {
     const holderArray = Array.from(holders);
     console.log(`Found ${holderArray.length} total unique BAYC holders`);
     
-    // Cache the result
+    // Cache the result with both block number and timestamp
     holdersCache[blockNumber] = holderArray;
+    holdersCache._timestamps[blockNumber] = blockTimestamp;
     saveHoldersCache();
     
     return holderArray;
@@ -498,6 +589,14 @@ async function getBAYCHoldersAtBlock(blockNumber) {
     
     // Cache this result too
     holdersCache[blockNumber] = holders;
+    try {
+      const block = await provider.getBlock(blockNumber);
+      if (block) {
+        holdersCache._timestamps[blockNumber] = block.timestamp;
+      }
+    } catch (e) {
+      console.warn(`Could not get timestamp for block ${blockNumber} for caching`);
+    }
     saveHoldersCache();
     
     return holders;
@@ -812,12 +911,20 @@ function getPreviousResults() {
 
 /**
  * Get total ETH value of all BAYC holders
+ * - Implements a pipeline approach with timing data
+ * - Better error handling for partial results
  */
 async function getTotalEthValueOfHolders(timestamp) {
   const startTime = Date.now();
+  const metrics = {
+    blockResolutionTime: 0,
+    holdersResolutionTime: 0,
+    balanceResolutionTime: 0,
+    totalTime: 0
+  };
   
   try {
-    // Use in-memory cache for previous results
+    // Use in-memory cache for previous results (fastest path)
     const previousResults = getPreviousResults();
     const cachedResult = previousResults?.['optimizedSolution']?.[timestamp];
     
@@ -831,40 +938,77 @@ async function getTotalEthValueOfHolders(timestamp) {
       };
     }
     
-    // Step 1: Get block number at timestamp
+    // ---- Step 1: Get block number at timestamp ----
     console.log(`Step 1: Finding block number for timestamp ${timestamp}`);
-    const blockNumber = await getBlockNumberAtTimestamp(timestamp);
-    console.log(`Using block number ${blockNumber} for timestamp ${timestamp}`);
+    const blockStartTime = Date.now();
     
-    // Step 2: Get BAYC holders at that block
+    let blockNumber;
+    try {
+      blockNumber = await getBlockNumberAtTimestamp(timestamp);
+      console.log(`Using block number ${blockNumber} for timestamp ${timestamp}`);
+      metrics.blockResolutionTime = Date.now() - blockStartTime;
+      console.log(`Block resolution took ${metrics.blockResolutionTime}ms`);
+    } catch (error) {
+      console.error(`Error resolving block number:`, error);
+      throw new Error(`Block resolution failed: ${error.message}`);
+    }
+    
+    // ---- Step 2: Get BAYC holders at that block ----
     console.log(`Step 2: Getting BAYC holders at block ${blockNumber}`);
-    const holders = await getBAYCHoldersAtBlock(blockNumber);
-    console.log(`Found ${holders.length} BAYC holders at this block`);
+    const holdersStartTime = Date.now();
     
-    // Step 3: Get ETH balances of all holders in parallel
-    console.log(`Step 3: Getting ETH balances for all holders`);
-    const balances = await getEthBalancesgraph(holders, blockNumber);
-    console.log(`Retrieved ${balances.length} balances`);
+    let holders;
+    try {
+      holders = await getBAYCHoldersAtBlock(blockNumber);
+      console.log(`Found ${holders.length} BAYC holders at this block`);
+      metrics.holdersResolutionTime = Date.now() - holdersStartTime;
+      console.log(`Holders resolution took ${metrics.holdersResolutionTime}ms`);
+    } catch (error) {
+      console.error(`Error retrieving holders:`, error);
+      throw new Error(`Holders retrieval failed: ${error.message}`);
+    }
+    
+    // Early validation to avoid unnecessary balance retrieval
+    if (!holders || holders.length === 0) {
+      throw new Error('No holders found - cannot proceed with balance retrieval');
+    }
+    
+    // ---- Step 3: Get ETH balances of all holders in parallel ----
+    console.log(`Step 3: Getting ETH balances for ${holders.length} holders`);
+    const balancesStartTime = Date.now();
+    
+    let balances;
+    try {
+      balances = await getEthBalancesgraph(holders, blockNumber);
+      console.log(`Retrieved ${balances.length} balances`);
+      metrics.balanceResolutionTime = Date.now() - balancesStartTime;
+      console.log(`Balance resolution took ${metrics.balanceResolutionTime}ms`);
+    } catch (error) {
+      console.error(`Error retrieving balances:`, error);
+      throw new Error(`Balance retrieval failed: ${error.message}`);
+    }
     
     if (balances.length !== holders.length) {
       console.warn(`Warning: Number of balances (${balances.length}) doesn't match holders (${holders.length})`);
     }
     
-    // Step 4: Sum total ETH value
+    // ---- Step 4: Sum total ETH value ----
     console.log(`Step 4: Calculating total ETH value`);
     const totalWei = balances.reduce((sum, balance) => sum.add(balance), ethers.BigNumber.from(0));
     const totalEth = ethers.utils.formatEther(totalWei);
     
-    const executionTime = Date.now() - startTime;
-    console.log(`Total ETH value: ${totalEth} ETH (execution time: ${executionTime}ms)`);
+    metrics.totalTime = Date.now() - startTime;
+    console.log(`Total ETH value: ${totalEth} ETH (total execution time: ${metrics.totalTime}ms)`);
     
+    // ---- Create detailed result ----
     const result = {
       blockNumber,
       holderCount: holders.length,
       totalWei,
       totalEth,
-      executionTime,
-      method: 'The Graph with optimized caching',
+      executionTime: metrics.totalTime,
+      metrics,
+      method: 'Optimized pipeline with enhanced caching',
       implementation: 'optimizedSolution'
     };
     
@@ -874,7 +1018,7 @@ async function getTotalEthValueOfHolders(timestamp) {
     return result;
   } catch (error) {
     console.error('Error calculating total ETH value:', error);
-    const executionTime = Date.now() - startTime;
+    metrics.totalTime = Date.now() - startTime;
     
     return {
       error: error.message,
@@ -882,8 +1026,9 @@ async function getTotalEthValueOfHolders(timestamp) {
       holderCount: 0,
       totalWei: ethers.BigNumber.from(0),
       totalEth: "0",
-      executionTime,
-      method: 'The Graph (errored)',
+      executionTime: metrics.totalTime,
+      metrics,
+      method: 'Error in pipeline execution',
       implementation: 'optimizedSolution'
     };
   }

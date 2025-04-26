@@ -104,6 +104,16 @@
       "implementation": "graph",
       "timestamp": "2025-04-26T08:56:53.682Z"
     },
+    "1683158400": {
+      "blockNumber": 17183607,
+      "holderCount": 5594,
+      "totalWei": "161869747767496835713486",
+      "totalEth": "161869.747767496835713486",
+      "executionTime": 23744,
+      "method": "The Graph",
+      "implementation": "graph",
+      "timestamp": "2025-04-26T10:04:51.077Z"
+    },
     "1745280000": {
       "blockNumber": 22320819,
       "holderCount": 5475,
@@ -125,6 +135,16 @@
       "method": "The Graph with optimized caching",
       "implementation": "optimizedSolution",
       "timestamp": "2025-04-26T10:00:23.049Z"
+    },
+    "1683158400": {
+      "blockNumber": 17183607,
+      "holderCount": 5594,
+      "totalWei": "161869747767496835713486",
+      "totalEth": "161869.747767496835713486",
+      "executionTime": 17253,
+      "method": "The Graph with optimized caching",
+      "implementation": "optimizedSolution",
+      "timestamp": "2025-04-26T10:04:23.412Z"
     },
     "1745280000": {
       "blockNumber": 22320819,
